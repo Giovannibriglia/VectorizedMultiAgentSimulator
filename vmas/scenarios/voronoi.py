@@ -3,6 +3,7 @@
 #  All rights reserved.
 from typing import Callable, Dict
 
+import numpy as np
 import torch
 from torch import Tensor
 from torch.distributions import MultivariateNormal
@@ -337,6 +338,10 @@ class Scenario(BaseScenario):
             )
         ]
 
+        # Compute Voronoi regions
+        vor = self._compute_voronoi_regions(env_index)
+        geoms = self._plot_voronoi_regions(vor, geoms)
+
         # Communication lines
         for i, agent1 in enumerate(self.world.agents):
             for j, agent2 in enumerate(self.world.agents):
@@ -393,6 +398,106 @@ class Scenario(BaseScenario):
                 color = color[env_index]
             geom.set_color(*color)
             geoms.append(geom)
+
+        return geoms
+
+    def _compute_voronoi_regions(self, env_index):
+        """
+        Computes Voronoi regions based on agent positions for a specific environment.
+
+        Args:
+            env_index: Index of the environment.
+
+        Returns:
+            Voronoi object from scipy.spatial.
+        """
+        from scipy.spatial import Voronoi
+
+        agent_positions = [
+            agent.state.pos[env_index].cpu().numpy() for agent in self.world.agents
+        ]
+        points = np.array(agent_positions)
+
+        # Compute Voronoi regions
+        vor = Voronoi(points)
+        return vor
+
+    @staticmethod
+    def _clip_line_to_bounds(p1, p2, x_bounds, y_bounds):
+        """
+        Clips a line segment to fit within the specified rectangular bounds.
+
+        Args:
+            p1, p2: Endpoints of the line segment as [x, y].
+            x_bounds: Tuple of (x_min, x_max) for x-coordinates.
+            y_bounds: Tuple of (y_min, y_max) for y-coordinates.
+
+        Returns:
+            Clipped line segment as a list of two points, or None if outside bounds.
+        """
+        from shapely.geometry import box, LineString
+
+        bbox = box(x_bounds[0], y_bounds[0], x_bounds[1], y_bounds[1])
+        line = LineString([p1, p2])
+        clipped_line = line.intersection(bbox)
+
+        if clipped_line.is_empty:
+            return None
+        elif clipped_line.geom_type == "LineString":
+            return list(clipped_line.coords)
+        else:
+            return None
+
+    def _plot_voronoi_regions(self, vor, geoms):
+        """
+        Plots Voronoi regions with finite and clipped infinite edges.
+
+        Args:
+            vor: Voronoi object from scipy.spatial.
+            geoms: List of geometric shapes for rendering.
+
+        Returns:
+            Updated list of geometries including Voronoi regions.
+        """
+        from vmas.simulator.rendering import PolyLine
+
+        x_min, x_max = -self.xdim, self.xdim
+        y_min, y_max = -self.ydim, self.ydim
+        ptp_bound = np.array([x_max - x_min, y_max - y_min])
+
+        center = vor.points.mean(axis=0)
+        finite_segments = []
+        infinite_segments = []
+
+        for pointidx, simplex in zip(vor.ridge_points, vor.ridge_vertices):
+            simplex = np.asarray(simplex)
+            if np.all(simplex >= 0):
+                finite_segments.append(vor.vertices[simplex])
+            else:
+                i = simplex[simplex >= 0][0]
+                t = vor.points[pointidx[1]] - vor.points[pointidx[0]]
+                t /= np.linalg.norm(t)
+                n = np.array([-t[1], t[0]])
+                midpoint = vor.points[pointidx].mean(axis=0)
+                direction = np.sign(np.dot(midpoint - center, n)) * n
+                far_point = vor.vertices[i] + direction * ptp_bound.max()
+                infinite_segments.append([vor.vertices[i], far_point])
+
+        # Render finite segments
+        for segment in finite_segments:
+            line = PolyLine(segment.tolist(), close=False)
+            line.set_color(0.2, 0.8, 0.2)
+            geoms.append(line)
+
+        # Render clipped infinite segments
+        for segment in infinite_segments:
+            clipped_segment = self._clip_line_to_bounds(
+                segment[0], segment[1], (x_min, x_max), (y_min, y_max)
+            )
+            if clipped_segment:
+                line = PolyLine(clipped_segment, close=False)
+                line.set_color(0.8, 0.2, 0.2)
+                geoms.append(line)
 
         return geoms
 
