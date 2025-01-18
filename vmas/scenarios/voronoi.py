@@ -14,6 +14,14 @@ from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
 from vmas.simulator.utils import Color, ScenarioUtils, X, Y
 
+from pathlib import Path
+vmas_dir = Path(__file__).parent
+print("vmas dir: ", vmas_dir)
+
+import sys, os
+sys.path.append(os.path.dirname(vmas_dir))
+from algorithms.VoronoiCoverage import VoronoiCoverage
+
 
 class Scenario(BaseScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
@@ -54,6 +62,8 @@ class Scenario(BaseScenario):
         self.agent_yspawn_range = 0 if self.spawn_same_pos else self.ydim
         self.x_semidim = self.xdim - self.agent_radius
         self.y_semidim = self.ydim - self.agent_radius
+
+        self.pdf = None
 
         # Make world
         world = World(
@@ -131,6 +141,13 @@ class Scenario(BaseScenario):
             )
             for loc, cov_matrix in zip(self.locs, self.cov_matrices)
         ]
+
+        x_grid = torch.linspace(-self.xdim, self.xdim, self.n_x_cells)
+        y_grid = torch.linspace(-self.ydim, self.ydim, self.n_y_cells)
+        xg, yg = torch.meshgrid(x_grid, y_grid)
+        xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T
+        # xy_grid = xy_grid.unsqueeze(0).expand(self.world.batch_dim, -1, -1)
+        self.pdf = self.sample_single_env(xy_grid, 0)
 
         if env_index is None:
             self.max_pdf[:] = 0
@@ -267,16 +284,19 @@ class Scenario(BaseScenario):
 
     def reward(self, agent: Agent) -> Tensor:
         is_first = self.world.agents.index(agent) == 0
+        robots = [a.state.pos for a in self.world.agents]
+        robots = torch.stack(robots).to(self.world.device)
+        voro = VoronoiCoverage(robots, self.pdf, self.grid_spacing, self.xdim, self.ydim, self.world.device, centralized=True)
+        voro.partitioning()
+        reward = 0.0
         if is_first:
             for a in self.world.agents:
-                a.sample = self.sample(
-                    a.state.pos, update_sampled_flag=True, norm=self.norm
-                )
-            self.sampling_rew = torch.stack(
-                [a.sample for a in self.world.agents], dim=-1
-            ).sum(-1)
+                reward += voro.computeCoverageFunction(self.world.agents.index(a))
+            # self.sampling_rew = torch.stack(
+            #     [a.sample for a in self.world.agents], dim=-1
+            # ).sum(-1)
 
-        return self.sampling_rew if self.shared_rew else agent.sample
+        return self.sampling_rew if self.shared_rew else voro.computeCoverageFunction(self.world.agents.index(agent))
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
