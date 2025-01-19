@@ -291,12 +291,12 @@ class Scenario(BaseScenario):
         reward = 0.0
         if is_first:
             for a in self.world.agents:
-                reward += voro.computeCoverageFunction(self.world.agents.index(a))
+                reward += voro.computeCoverageFunction2(self.world.agents.index(a))
             # self.sampling_rew = torch.stack(
             #     [a.sample for a in self.world.agents], dim=-1
             # ).sum(-1)
 
-        return self.sampling_rew if self.shared_rew else voro.computeCoverageFunction(self.world.agents.index(agent))
+        return torch.tensor(reward) if self.shared_rew else voro.computeCoverageFunction2(self.world.agents.index(agent))
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
