@@ -8,7 +8,6 @@ from matplotlib.path import Path
 class VoronoiCoverage:
     def __init__(self, agents, pdf, grid_spacing, xdim=10, ydim=10, device="cpu", centralized=True):
         self.agents = agents                        # [n_agents, n_envs, dim]
-        print("agents shape: ", self.agents.shape)
         self.pdf = pdf                              # [nxcells, nycells]
         self.centralized = centralized
         self.xmin = -xdim / 2
@@ -62,7 +61,7 @@ class VoronoiCoverage:
         return bool_val
 
     def computeCoverageFunction(self, agent_id):
-        reward = 0.0
+        reward = torch.zeros((self.worlds_num))
         for i in range(self.worlds_num):
             vor = self.voronois[i]
             region = vor.point_region[agent_id]
@@ -72,7 +71,7 @@ class VoronoiCoverage:
             bool_val = self.getPointsInRegion(verts)
             mask = bool_val.reshape(self.nxcells, self.nycells)
             weights = self.pdf[i][bool_val]
-            reward += torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id, i], axis=1)**2) * self.grid_spacing**2
+            reward[i] = torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id, i], axis=1)**2) * self.grid_spacing**2
 
         return reward
 

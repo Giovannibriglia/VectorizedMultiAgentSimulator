@@ -288,15 +288,13 @@ class Scenario(BaseScenario):
         robots = torch.stack(robots).to(self.world.device)
         voro = VoronoiCoverage(robots, self.pdf, self.grid_spacing, self.xdim, self.ydim, self.world.device, centralized=True)
         voro.partitioning()
-        reward = 0.0
+        reward = torch.zeros((self.world.batch_dim, self.n_agents))
         if is_first:
-            for a in self.world.agents:
-                reward += voro.computeCoverageFunction(self.world.agents.index(a))
-            # self.sampling_rew = torch.stack(
-            #     [a.sample for a in self.world.agents], dim=-1
-            # ).sum(-1)
+            for i,a in enumerate(self.world.agents):
+                reward[:, i] = voro.computeCoverageFunction(self.world.agents.index(a))
+            self.sampling_rew = reward.sum(-1)
 
-        return torch.tensor(reward) if self.shared_rew else voro.computeCoverageFunction(self.world.agents.index(agent))
+        return self.sampling_rew if self.shared_rew else voro.computeCoverageFunction(self.world.agents.index(agent))
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
