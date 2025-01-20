@@ -61,7 +61,7 @@ class VoronoiCoverage:
         bool_val = p.contains_points(self.xy_grid.cpu().detach().numpy())
         return bool_val
 
-    def computeCoverageFunction2(self, agent_id):
+    def computeCoverageFunction(self, agent_id):
         reward = 0.0
         for i in range(self.worlds_num):
             vor = self.voronois[i]
@@ -71,22 +71,11 @@ class VoronoiCoverage:
             # verts = [[vor.vertices[v] for v in vor.regions[region]] for region in regions]
             bool_val = self.getPointsInRegion(verts)
             mask = bool_val.reshape(self.nxcells, self.nycells)
-            weights = self.pdf[bool_val]
+            weights = self.pdf[i][bool_val]
             reward += torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id, i], axis=1)**2) * self.grid_spacing**2
 
         return reward
 
-
-
-    def computeCoverageFunction(self, agent_id):
-        reward = 0.0
-        for i in range(self.worlds_num):
-            region = self.regions[i][agent_id]
-            verts = self.vertices[i][agent_id]
-            bool_val = self.getPointsInRegion(verts)
-            weights = self.pdf[bool_val.reshape(self.nxcells, self.nycells)]
-            reward += torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id], axis=1)**2) * self.grid_spacing**2
-        return reward
 
     def computeCoverageFunctionSingleEnv(self, agent_id, env_id):
         region = self.regions[env_id][agent_id]

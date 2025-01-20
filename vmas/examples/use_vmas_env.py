@@ -119,7 +119,7 @@ if __name__ == "__main__":
         scenario_name="voronoi",
         render=True,
         save_render=False,
-        random_action=False,
+        random_action=True,
         continuous_actions=False,
         # Environment specific
         n_agents=4,

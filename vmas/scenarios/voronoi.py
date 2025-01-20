@@ -63,7 +63,7 @@ class Scenario(BaseScenario):
         self.x_semidim = self.xdim - self.agent_radius
         self.y_semidim = self.ydim - self.agent_radius
 
-        self.pdf = None
+        self.pdf = [None] * batch_dim
 
         # Make world
         world = World(
@@ -147,7 +147,7 @@ class Scenario(BaseScenario):
         xg, yg = torch.meshgrid(x_grid, y_grid)
         xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T
         # xy_grid = xy_grid.unsqueeze(0).expand(self.world.batch_dim, -1, -1)
-        self.pdf = self.sample_single_env(xy_grid, 0)
+        self.pdf = [self.sample_single_env(xy_grid, i) for i in range(self.world.batch_dim)]
 
         if env_index is None:
             self.max_pdf[:] = 0
@@ -291,12 +291,12 @@ class Scenario(BaseScenario):
         reward = 0.0
         if is_first:
             for a in self.world.agents:
-                reward += voro.computeCoverageFunction2(self.world.agents.index(a))
+                reward += voro.computeCoverageFunction(self.world.agents.index(a))
             # self.sampling_rew = torch.stack(
             #     [a.sample for a in self.world.agents], dim=-1
             # ).sum(-1)
 
-        return torch.tensor(reward) if self.shared_rew else voro.computeCoverageFunction2(self.world.agents.index(agent))
+        return torch.tensor(reward) if self.shared_rew else voro.computeCoverageFunction(self.world.agents.index(agent))
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
