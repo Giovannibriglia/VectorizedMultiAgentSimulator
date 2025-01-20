@@ -69,7 +69,6 @@ class VoronoiCoverage:
             # regions = [vor.regions[j] for j in vor.point_region[:self.robots_num]]
             # verts = [[vor.vertices[v] for v in vor.regions[region]] for region in regions]
             bool_val = self.getPointsInRegion(verts)
-            mask = bool_val.reshape(self.nxcells, self.nycells)
             weights = self.pdf[i][bool_val]
             reward[i] = torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id, i], axis=1)**2) * self.grid_spacing**2
 
@@ -77,22 +76,48 @@ class VoronoiCoverage:
 
 
     def computeCoverageFunctionSingleEnv(self, agent_id, env_id):
-        region = self.regions[env_id][agent_id]
-        bool_val = self.getPointsInRegion(region)
-        weights = self.pdf[bool_val.reshape(self.nxcells, self.nycells)]
-        reward = torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id], axis=1)**2) * self.grid_spacing**2
-        return reward
+        vor = self.voronois[env_id]
+        region = vor.point_region[agent_id]
+        verts = [vor.vertices[v] for v in vor.regions[region]]
+        bool_val = self.getPointsInRegion(verts)
+        mask = bool_val.reshape(self.nxcells, self.nycells)
+        weights = self.pdf[env_id][bool_val]
+        reward[env_id] = torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id, env_id], axis=1)**2) * self.grid_spacing**2
 
 
     def computeCentroid(self, agent_id):
-        region = self.regions[agent_id]
-        bool_val = self.getPointsInRegion(region)
-        weights = self.pdf[bool_val.reshape(self.nxcells, self.nycells)]
+        centroids = torch.zeros((self.worlds_num, 2))
+        for i in range(self.worlds_num):
+            vor = self.voronois[i]
+            region = vor.point_region[agent_id]
+            verts = [vor.vertices[v] for v in vor.regions[region]]
+            bool_val = self.getPointsInRegion(verts)
+            weights = self.pdf[i][bool_val]
+            dA = self.grid_spacing**2
+            A = torch.sum(weights) * dA
+            Cx = torch.sum(weights * self.xy_grid[:, 0][bool_val]) * dA
+            Cy = torch.sum(weights * self.xy_grid[:, 1][bool_val]) * dA
+            centroids[i, :] = torch.tensor([Cx/A, Cy/A])
+
+        return centroids
+
+    def computeCentroidSingleEnv(self, agent_id, env_id):
+        """
+        Warning: env_id is the index in range (0, batch_dim), not the same env_id as the Scenario.
+        """
+        centroid = torch.zeros(2)
+        vor = self.voronois[env_id]
+        region = vor.point_region[agent_id]
+        verts = [vor.vertices[v] for v in vor.regions[region]]
+        bool_val = self.getPointsInRegion(verts)
+        weights = self.pdf[env_id][bool_val]
         dA = self.grid_spacing**2
         A = torch.sum(weights) * dA
         Cx = torch.sum(weights * self.xy_grid[:, 0][bool_val]) * dA
         Cy = torch.sum(weights * self.xy_grid[:, 1][bool_val]) * dA
-        return torch.tensor(([Cx, Cy]) / A)
+        centroid = torch.tensor([Cx/A, Cy/A])
+
+        return centroid
 
 
 
