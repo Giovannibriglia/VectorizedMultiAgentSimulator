@@ -64,6 +64,7 @@ class Scenario(BaseScenario):
         self.y_semidim = self.ydim - self.agent_radius
 
         self.pdf = [None] * batch_dim
+        self.Kp = 0.8                                   # proportional gain
 
         # Make world
         world = World(
@@ -295,6 +296,16 @@ class Scenario(BaseScenario):
             self.sampling_rew = reward.sum(-1)
 
         return self.sampling_rew if self.shared_rew else voro.computeCoverageFunction(self.world.agents.index(agent))
+
+    def get_coverage_actions(self, agent: Agent) -> Tensor:
+        robots = [a.state.pos for a in self.world.agents]
+        robots = torch.stack(robots).to(self.world.device)
+        voro = VoronoiCoverage(robots, self.pdf, self.grid_spacing, self.xdim, self.ydim, self.world.device, centralized=True)
+        voro.partitioning()
+        centroids = voro.computeCentroid(self.world.agents.index(agent))
+        action = self.Kp * (centroids - agent.state.pos)                # should be [n_envs, 2]
+        return action
+
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
