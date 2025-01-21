@@ -11,13 +11,12 @@ from torch.distributions import MultivariateNormal
 from vmas import render_interactively
 from vmas.simulator.core import Agent, Entity, Line, Sphere, World
 from vmas.simulator.scenario import BaseScenario
+from vmas.simulator.heuristic_policy import BaseHeuristicPolicy
 from vmas.simulator.sensors import Lidar
 from vmas.simulator.utils import Color, ScenarioUtils, X, Y
 
 from pathlib import Path
 vmas_dir = Path(__file__).parent
-print("vmas dir: ", vmas_dir)
-
 import sys, os
 sys.path.append(os.path.dirname(vmas_dir))
 from algorithms.VoronoiCoverage import VoronoiCoverage
@@ -35,7 +34,7 @@ class Scenario(BaseScenario):
         self.ydim = kwargs.pop("ydim", 1)
         self.grid_spacing = kwargs.pop("grid_spacing", 0.05)
 
-        self.n_gaussians = kwargs.pop("n_gaussians", 3)
+        self.n_gaussians = kwargs.pop("n_gaussians", 1)
         self.cov = kwargs.pop("cov", 0.05)
         self.collisions = kwargs.pop("collisions", True)
         self.spawn_same_pos = kwargs.pop("spawn_same_pos", False)
@@ -129,7 +128,8 @@ class Scenario(BaseScenario):
                 device=self.world.device,
                 dtype=torch.float32,
             ).uniform_(-self.ydim, self.ydim)
-            new_loc = torch.cat([x, y], dim=-1)
+            # new_loc = torch.cat([x, y], dim=-1)
+            new_loc = torch.tensor([0.0, 0.0]).to(self.world.device)
             if env_index is None:
                 self.locs[i] = new_loc
             else:
@@ -529,6 +529,20 @@ class Scenario(BaseScenario):
                 geoms.append(line)
 
         return geoms
+
+
+class VoronoiPolicy(BaseHeuristicPolicy):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.Kp = 0.8
+
+    def compute_action(self, agents: torch.Tensor, centroids: torch.Tensor, u_range: float) -> torch.Tensor:
+        self.device = centroids.device
+        control = self.Kp * (centroids - agents)
+        return torch.clamp(control, -u_range, u_range)
+        
+
+
 
 
 if __name__ == "__main__":
