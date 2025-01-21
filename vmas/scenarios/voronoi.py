@@ -146,7 +146,7 @@ class Scenario(BaseScenario):
         x_grid = torch.linspace(-self.xdim, self.xdim, self.n_x_cells)
         y_grid = torch.linspace(-self.ydim, self.ydim, self.n_y_cells)
         xg, yg = torch.meshgrid(x_grid, y_grid)
-        xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T
+        xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.world.device)
         # xy_grid = xy_grid.unsqueeze(0).expand(self.world.batch_dim, -1, -1)
         self.pdf = [self.sample_single_env(xy_grid, i) for i in range(self.world.batch_dim)]
 

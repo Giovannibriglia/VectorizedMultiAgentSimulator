@@ -50,7 +50,7 @@ class VoronoiCoverage:
         self.x_grid = torch.linspace(self.xmin, self.xmax, self.nxcells)
         self.y_grid = torch.linspace(self.ymin, self.ymax, self.nycells)
         xg, yg = torch.meshgrid(self.x_grid, self.y_grid)
-        self.xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T
+        self.xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(device)
         regions_single_env = [None for i in range(self.robots_num)]
         self.regions = [regions_single_env] * self.worlds_num
         self.vertices = [regions_single_env] * self.worlds_num
@@ -118,7 +118,7 @@ class VoronoiCoverage:
 
 
     def computeCentroid(self, agent_id):
-        centroids = torch.zeros((self.worlds_num, 2))
+        centroids = torch.zeros((self.worlds_num, 2), device=self.device)
         for i in range(self.worlds_num):
             vor = self.voronois[i]
             region = vor.point_region[agent_id]
@@ -137,7 +137,7 @@ class VoronoiCoverage:
         """
         Warning: env_id is the index in range (0, batch_dim), not the same env_id as the Scenario.
         """
-        centroid = torch.zeros(2)
+        centroid = torch.zeros(2, device=self.device)
         vor = self.voronois[env_id]
         region = vor.point_region[agent_id]
         verts = [vor.vertices[v] for v in vor.regions[region]]

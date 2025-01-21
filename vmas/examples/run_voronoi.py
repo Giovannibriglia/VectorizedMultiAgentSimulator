@@ -17,8 +17,8 @@ import sys, os
 sys.path.append(os.path.dirname(vmas_dir))
 from algorithms.VoronoiCoverage import VoronoiCoverage
 
-dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("device; ", dev)
+mydev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("device; ", mydev)
 
 def run_heuristic(
     scenario_name: str,
@@ -28,7 +28,7 @@ def run_heuristic(
     env_kwargs: dict = None,
     render: bool = False,
     save_render: bool = False,
-    device: str = "cpu",
+    device: str = mydev,
 ):
     assert not (save_render and not render), "To save the video you have to render it"
     if env_kwargs is None:
