@@ -24,7 +24,7 @@ from algorithms.VoronoiCoverage import VoronoiCoverage
 
 class Scenario(BaseScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
-        self.n_agents = kwargs.pop("n_agents", 3)
+        self.n_agents = kwargs.pop("n_agents", 8)
         self.shared_rew = kwargs.pop("shared_rew", True)
 
         self.comms_range = kwargs.pop("comms_range", 0.0)
@@ -34,7 +34,7 @@ class Scenario(BaseScenario):
         self.ydim = kwargs.pop("ydim", 1)
         self.grid_spacing = kwargs.pop("grid_spacing", 0.05)
 
-        self.n_gaussians = kwargs.pop("n_gaussians", 1)
+        self.n_gaussians = kwargs.pop("n_gaussians", 3)
         self.cov = kwargs.pop("cov", 0.05)
         self.collisions = kwargs.pop("collisions", True)
         self.spawn_same_pos = kwargs.pop("spawn_same_pos", False)
@@ -128,8 +128,8 @@ class Scenario(BaseScenario):
                 device=self.world.device,
                 dtype=torch.float32,
             ).uniform_(-self.ydim, self.ydim)
-            # new_loc = torch.cat([x, y], dim=-1)
-            new_loc = torch.tensor([0.0, 0.0]).to(self.world.device)
+            new_loc = torch.cat([x, y], dim=-1)
+            # new_loc = torch.tensor([0.0, 0.0]).to(self.world.device)
             if env_index is None:
                 self.locs[i] = new_loc
             else:

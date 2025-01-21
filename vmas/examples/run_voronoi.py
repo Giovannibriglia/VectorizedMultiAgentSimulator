@@ -17,6 +17,8 @@ import sys, os
 sys.path.append(os.path.dirname(vmas_dir))
 from algorithms.VoronoiCoverage import VoronoiCoverage
 
+dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print("device; ", dev)
 
 def run_heuristic(
     scenario_name: str,
@@ -51,7 +53,6 @@ def run_heuristic(
     total_reward = 0
     n_agents = len(env.agents)
     env.reset()
-    print("pdf max: ", env.scenario.pdf)
     for _ in range(n_steps):
         step += 1
         actions = [None] * n_agents
@@ -61,10 +62,7 @@ def run_heuristic(
         voro.partitioning()
         for i in range(n_agents):
             centroids = voro.computeCentroid(i)
-            act = policy.compute_action(env.agents[i].state.pos, centroids, u_range=env.agents[i].u_range)
-            actions[i] = torch.nan_to_num(act, nan=0.0)
-            # actions[i] = act
-            print(f"Actions for robot {i}: {actions[i]}")
+            actions[i] = policy.compute_action(env.agents[i].state.pos, centroids, u_range=env.agents[i].u_range)
         obs, rews, dones, info = env.step(actions)
         rewards = torch.stack(rews, dim=1)
         global_reward = rewards.mean(dim=1)
@@ -96,7 +94,7 @@ if __name__ == "__main__":
         scenario_name="voronoi",
         heuristic=VoronoiPolicy,
         n_envs=2,
-        n_steps=500,
+        n_steps=200,
         render=True,
-        save_render=True,
+        save_render=False,
     )
