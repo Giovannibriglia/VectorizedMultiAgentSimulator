@@ -323,6 +323,7 @@ class Scenario(BaseScenario):
             [self.grid_spacing, -self.grid_spacing],
             [-self.grid_spacing, self.grid_spacing],
             [self.grid_spacing, self.grid_spacing],
+            [0, 0],
         ]:
             pos = agent.state.pos + torch.tensor(
                 delta,

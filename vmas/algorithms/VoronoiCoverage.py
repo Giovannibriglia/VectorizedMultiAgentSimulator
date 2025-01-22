@@ -104,7 +104,7 @@ class VoronoiCoverage:
             weights = self.pdf[i][bool_val]
             reward[i] = torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id, i], axis=1)**2) * self.grid_spacing**2
 
-        return reward
+        return -reward
 
 
     def computeCoverageFunctionSingleEnv(self, agent_id, env_id):
