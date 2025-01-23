@@ -335,8 +335,8 @@ class Scenario(BaseScenario):
         #     [-self.grid_spacing, 0]]
     
         deltas = []
-        for i in range(-3, 4):  # Loop from -3 to 3 (inclusive)
-            for j in range(-3, 4):  # Loop from -3 to 3 (inclusive)
+        for i in range(-self.cells_range, self.cells_range+1):
+            for j in range(-self.cells_range, self.cells_range+1):
                 deltas.append([i * self.grid_spacing, j * self.grid_spacing])
 
 
@@ -756,8 +756,8 @@ class VoronoiCoverage:
         if self.centralized:
             xy_grid = self.xy_grid
         else:
-            x_grid = torch.linspace(robot[0]-3*self.grid_spacing, robot[0]+3*self.grid_spacing, self.nxcells)
-            y_grid = torch.linspace(robot[1]-3*self.grid_spacing, robot[1]+3*self.grid_spacing, self.nycells)
+            x_grid = torch.linspace(robot[0]-self.cells_range*self.grid_spacing, robot[0]+self.cells_range*self.grid_spacing, self.nxcells)
+            y_grid = torch.linspace(robot[1]-self.cells_range*self.grid_spacing, robot[1]+self.cells_range*self.grid_spacing, self.nycells)
             xg, yg = torch.meshgrid(x_grid, y_grid)
             xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
         bool_val = self.getPointsInRegion(verts, xy_grid)
