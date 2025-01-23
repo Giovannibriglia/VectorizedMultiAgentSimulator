@@ -35,8 +35,6 @@ def run_heuristic(
         env_kwargs = {}
 
     # Scenario specific variables
-    policy = heuristic(continuous_action=True)
-
     env = make_env(
         scenario=scenario_name,
         num_envs=n_envs,
@@ -47,22 +45,25 @@ def run_heuristic(
         **env_kwargs,
     )
 
+    policy = heuristic(env=env, continuous_action=True)
+
+
     frame_list = []  # For creating a gif
     init_time = time.time()
     step = 0
     total_reward = 0
     n_agents = len(env.agents)
-    env.reset()
+    obs = torch.stack(env.reset(), dim=0)
     for _ in range(n_steps):
         step += 1
+        print("Step ", step)
         actions = [None] * n_agents
-        robots = [a.state.pos for a in env.agents]
-        robots = torch.stack(robots).to(device)
-        voro = VoronoiCoverage(robots, env.scenario.pdf, env.scenario.grid_spacing, env.scenario.xdim, env.scenario.ydim, env.scenario.world.device, centralized=True)
-        voro.partitioning()
+        # robots = [a.state.pos for a in env.agents]
+        # robots = torch.stack(robots).to(device)
+        # voro = VoronoiCoverage(robots, env.scenario.pdf, env.scenario.grid_spacing, env.scenario.xdim, env.scenario.ydim, env.scenario.world.device, centralized=True)
+        # voro.partitioning()
         for i in range(n_agents):
-            centroids = voro.computeCentroid(i)
-            actions[i] = policy.compute_action(env.agents[i].state.pos, centroids, u_range=env.agents[i].u_range)
+            actions[i] = policy.compute_action(obs[i], u_range=env.agents[i].u_range)
         obs, rews, dones, info = env.step(actions)
         rewards = torch.stack(rews, dim=1)
         global_reward = rewards.mean(dim=1)
@@ -94,7 +95,7 @@ if __name__ == "__main__":
         scenario_name="voronoi",
         heuristic=VoronoiPolicy,
         n_envs=2,
-        n_steps=200,
+        n_steps=500,
         render=True,
         save_render=False,
     )
