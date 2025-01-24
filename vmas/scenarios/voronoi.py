@@ -628,31 +628,27 @@ class VoronoiCoverage:
         self.xy_grid_tot = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
 
     def mirror(self, points, xmin, xmax, ymin, ymax):
-        mirrored_points = []
-        
+        square_corners = torch.tensor([(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)], device=self.device, dtype=torch.float32)
+        edges = torch.roll(square_corners, shifts=-1, dims=0) - square_corners
 
-        # Define the corners of the square
-        square_corners = [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)]
+        # normalize edge vectors
+        edge_lengths = torch.norm(edges, dim=1, keepdim=True)
+        normalized_edges = edges / edge_lengths
 
-        # Mirror points across each edge of the square
-        for edge_start, edge_end in zip(square_corners, square_corners[1:] + [square_corners[0]]):
-            edge_vector = (edge_end[0] - edge_start[0], edge_end[1] - edge_start[1])
+        n_points = points.shape[0]
+        n_edges = square_corners.shape[0]
 
-            for point in points:
-                # Calculate the vector from the edge start to the point
-                point_vector = (point[0] - edge_start[0], point[1] - edge_start[1])
+        points_expanded = points.unsqueeze(1).expand(-1, n_edges, -1)       # [n_pts, n_edges, 2]
+        edge_starts_expanded = square_corners.unsqueeze(0).expand(n_points, -1, -1)     # [n_pts, n_edges, 2]
+        edge_directions_expanded = normalized_edges.unsqueeze(0).expand(n_points, -1, -1)
 
-                # Calculate the mirrored point by reflecting across the edge
-                mirrored_vector = (point_vector[0] - 2 * (point_vector[0] * edge_vector[0] + point_vector[1] * edge_vector[1]) / (edge_vector[0]**2 + edge_vector[1]**2) * edge_vector[0],
-                                point_vector[1] - 2 * (point_vector[0] * edge_vector[0] + point_vector[1] * edge_vector[1]) / (edge_vector[0]**2 + edge_vector[1]**2) * edge_vector[1])
+        relative_points = points_expanded - edge_starts_expanded
+        projections = torch.sum(relative_points * edge_directions_expanded, dim=2, keepdim=True)
+        reflected_points = relative_points - 2 * projections
+        mirrored_points = reflected_points + edge_starts_expanded
 
-                # Translate the mirrored vector back to the absolute coordinates
-                mirrored_point = (edge_start[0] + mirrored_vector[0], edge_start[1] + mirrored_vector[1])
-
-                # Add the mirrored point to the result list
-                mirrored_points.append(mirrored_point)
-
-        return mirrored_points
+        mirrored_points = mirrored_points.reshape(-1, 2)
+        return mirrored_points.tolist()
         
 
     def partitioning(self, agents: torch.Tensor):
