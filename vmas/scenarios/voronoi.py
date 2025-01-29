@@ -297,20 +297,21 @@ class Scenario(BaseScenario):
         robots = [a.state.pos for a in self.world.agents]
         robots = torch.stack(robots).to(self.world.device)
         reward = torch.zeros((self.world.batch_dim, self.n_agents))
-        if is_first:
-            for j in range(self.world.batch_dim):
-                robots_j = robots[:, j, :]
-                vor = self.voronoi.partitioning_single_env(robots_j)
-                for i,a in enumerate(self.world.agents):
-                    reward[j, i] = self.voronoi.computeCoverageFunctionSingleEnv(vor, self.pdf[j], self.world.agents.index(a), j)
-            self.sampling_rew = reward.sum(-1)
+        if self.shared_rew:
+            if is_first:
+                for j in range(self.world.batch_dim):
+                    robots_j = robots[:, j, :]
+                    vor = self.voronoi.partitioning_single_env(robots_j)
+                    for i,a in enumerate(self.world.agents):
+                        reward[j, i] = self.voronoi.computeCoverageFunctionSingleEnv(vor, self.pdf[j], self.world.agents.index(a), j)
+                self.sampling_rew = reward.sum(-1)
         else:
             for j in range(self.world.batch_dim):
                 robots_j = robots[:, j, :]
                 vor = self.voronoi.partitioning_single_env(robots_j)
-                single_rew = self.voronoi.computeCoverageFunctionSingleEnv(vor, self.pdf[j], self.world.agents.index(agent), j)
+                self.single_rew = self.voronoi.computeCoverageFunctionSingleEnv(vor, self.pdf[j], self.world.agents.index(agent), j)
 
-        return self.sampling_rew if self.shared_rew else single_rew
+        return self.sampling_rew if self.shared_rew else self.single_rew.unsqueeze(-1)
 
 
     def observation(self, agent: Agent) -> Tensor:
