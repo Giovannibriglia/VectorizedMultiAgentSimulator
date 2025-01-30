@@ -2,6 +2,8 @@
 #  ProrokLab (https://www.proroklab.org/)
 #  All rights reserved.
 import time
+
+from pathlib import Path
 from typing import Type
 
 import torch
@@ -10,15 +12,17 @@ from vmas import make_env
 from vmas.simulator.heuristic_policy import BaseHeuristicPolicy, RandomPolicy
 from vmas.simulator.utils import save_video
 
-from pathlib import Path
 vmas_dir = Path(__file__).parent
 
-import sys, os
+import os, sys
+
 sys.path.append(os.path.dirname(vmas_dir))
-from algorithms.VoronoiCoverage import VoronoiCoverage
+
+# from algorithms.VoronoiCoverage import VoronoiCoverage
 
 mydev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("device; ", mydev)
+
 
 def run_heuristic(
     scenario_name: str,
@@ -47,7 +51,6 @@ def run_heuristic(
 
     policy = heuristic(env=env, continuous_action=True)
 
-
     frame_list = []  # For creating a gif
     init_time = time.time()
     step = 0
@@ -68,6 +71,7 @@ def run_heuristic(
         rewards = torch.stack(rews, dim=1)
         global_reward = rewards.mean(dim=1)
         mean_global_reward = global_reward.mean(dim=0)
+        print("Mean reward: ", mean_global_reward)
         total_reward += mean_global_reward
         if render:
             frame_list.append(

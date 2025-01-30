@@ -5,18 +5,18 @@ from typing import Callable, Dict
 
 import numpy as np
 import torch
+from matplotlib.path import Path
+
+from scipy.spatial import Voronoi
 from torch import Tensor
 from torch.distributions import MultivariateNormal
 
 from vmas import render_interactively
 from vmas.simulator.core import Agent, Entity, Line, Sphere, World
-from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.heuristic_policy import BaseHeuristicPolicy
+from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
 from vmas.simulator.utils import Color, ScenarioUtils, X, Y
-
-from scipy.spatial import Voronoi
-from matplotlib.path import Path
 
 # from pathlib import Path
 # vmas_dir = Path(__file__).parent
@@ -44,9 +44,11 @@ class Scenario(BaseScenario):
         self.norm = kwargs.pop("norm", True)
 
         self.angle_start = kwargs.pop("angle_start", 0.05)
-        self.angle_end = kwargs.pop("angle_end", 2*torch.pi+0.05)
+        self.angle_end = kwargs.pop("angle_end", 2 * torch.pi + 0.05)
         self.n_rays = kwargs.pop("n_rays", 20)
-        self.cells_range = kwargs.pop("cells_range", 3)             # number of cells sensed on each side
+        self.cells_range = kwargs.pop(
+            "cells_range", 3
+        )  # number of cells sensed on each side
         self.centralized = kwargs.pop("centralized", False)
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
@@ -72,8 +74,15 @@ class Scenario(BaseScenario):
         self.y_semidim = self.ydim - self.agent_radius
 
         self.pdf = [None] * batch_dim
-        self.Kp = 0.8                                   # proportional gain
-        self.voronoi = VoronoiCoverage(self.grid_spacing, self.cells_range, self.xdim, self.ydim, device, self.centralized)
+        self.Kp = 0.8  # proportional gain
+        self.voronoi = VoronoiCoverage(
+            self.grid_spacing,
+            self.cells_range,
+            self.xdim,
+            self.ydim,
+            device,
+            self.centralized,
+        )
 
         # Make world
         world = World(
@@ -158,7 +167,9 @@ class Scenario(BaseScenario):
         xg, yg = torch.meshgrid(x_grid, y_grid)
         xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.world.device)
         # xy_grid = xy_grid.unsqueeze(0).expand(self.world.batch_dim, -1, -1)
-        self.pdf = [self.sample_single_env(xy_grid, i) for i in range(self.world.batch_dim)]
+        self.pdf = [
+            self.sample_single_env(xy_grid, i) for i in range(self.world.batch_dim)
+        ]
 
         if env_index is None:
             self.max_pdf[:] = 0
@@ -303,17 +314,20 @@ class Scenario(BaseScenario):
                 for j in range(self.world.batch_dim):
                     robots_j = robots[:, j, :]
                     vor = self.voronoi.partitioning_single_env(robots_j)
-                    for i,a in enumerate(self.world.agents):
-                        reward[j, i] = self.voronoi.computeCoverageFunctionSingleEnv(vor, self.pdf[j], self.world.agents.index(a), j)
+                    for i, a in enumerate(self.world.agents):
+                        reward[j, i] = self.voronoi.computeCoverageFunctionSingleEnv(
+                            vor, self.pdf[j], self.world.agents.index(a), j
+                        )
                 self.sampling_rew = reward.sum(-1)
         else:
             for j in range(self.world.batch_dim):
                 robots_j = robots[:, j, :]
                 vor = self.voronoi.partitioning_single_env(robots_j)
-                self.single_rew = self.voronoi.computeCoverageFunctionSingleEnv(vor, self.pdf[j], self.world.agents.index(agent), j)
+                self.single_rew = self.voronoi.computeCoverageFunctionSingleEnv(
+                    vor, self.pdf[j], self.world.agents.index(agent), j
+                )
 
         return self.sampling_rew if self.shared_rew else self.single_rew.unsqueeze(-1)
-
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
@@ -331,12 +345,11 @@ class Scenario(BaseScenario):
         #     [0, self.grid_spacing],
         #     [-self.grid_spacing, self.grid_spacing],
         #     [-self.grid_spacing, 0]]
-    
-        deltas = []
-        for i in range(-self.cells_range, self.cells_range+1):
-            for j in range(-self.cells_range, self.cells_range+1):
-                deltas.append([i * self.grid_spacing, j * self.grid_spacing])
 
+        deltas = []
+        for i in range(-self.cells_range, self.cells_range + 1):
+            for j in range(-self.cells_range, self.cells_range + 1):
+                deltas.append([i * self.grid_spacing, j * self.grid_spacing])
 
         for delta in deltas:
             # occupied cell + ccw cells from bottom left
@@ -568,20 +581,22 @@ class VoronoiPolicy(BaseHeuristicPolicy):
 
     def compute_action(self, observation: torch.Tensor, u_range: float) -> torch.Tensor:
         # extract info from observation
-        pdf = observation[:, (4+self.n_rays):]
+        pdf = observation[:, (4 + self.n_rays) :]
         pos = observation[:, :2]
-        vel = observation[:, 2:4]
-        lidar_values = observation[:, 4:4+self.n_rays]
+        # vel = observation[:, 2:4]
+        lidar_values = observation[:, 4 : 4 + self.n_rays]
 
         # get detected robots relative positions
-        angles = torch.linspace(self.angle_start, self.angle_end, self.n_rays, device=self.device)
+        angles = torch.linspace(
+            self.angle_start, self.angle_end, self.n_rays, device=self.device
+        )
         x = lidar_values * torch.cos(angles)
         y = lidar_values * torch.sin(angles)
-        robots_rel = torch.stack((x,y), dim=-1)                 # [n_envs, n_rays, 2]
-        detected_mask = lidar_values != self.lidar_range    # [n_envs, n_rays]
-        points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)       # [n_envs, n_rays, 2]
+        robots_rel = torch.stack((x, y), dim=-1)  # [n_envs, n_rays, 2]
+        # detected_mask = lidar_values != self.lidar_range  # [n_envs, n_rays]
+        points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
         robots = points + robots_rel
-        points = torch.cat((pos.unsqueeze(1), robots), dim=1)                 # [n_envs, n_rays+1, 2]
+        points = torch.cat((pos.unsqueeze(1), robots), dim=1)  # [n_envs, n_rays+1, 2]
         actions = torch.zeros((pos.shape[0], 2))
         for i in range(pos.shape[0]):
             voro = self.voronoi.partitioning_single_env(points[i])
@@ -590,19 +605,23 @@ class VoronoiPolicy(BaseHeuristicPolicy):
 
         return actions
 
-
         # output: [n_envs, 2]
-
-
 
 
 if __name__ == "__main__":
     render_interactively(__file__, control_two_agents=True)
 
 
-
 class VoronoiCoverage:
-    def __init__(self, grid_spacing, cells_range, xdim=10, ydim=10, device="cpu", centralized=True):
+    def __init__(
+        self,
+        grid_spacing,
+        cells_range,
+        xdim=10,
+        ydim=10,
+        device="cpu",
+        centralized=True,
+    ):
         self.centralized = centralized
         self.xmin = -xdim
         self.xmax = xdim
@@ -610,8 +629,16 @@ class VoronoiCoverage:
         self.ymax = ydim
         self.cells_range = cells_range
         self.grid_spacing = grid_spacing
-        self.nxcells = int(2 * xdim / self.grid_spacing) if centralized else 2*self.cells_range+1
-        self.nycells = int(2 * ydim / self.grid_spacing) if centralized else 2*self.cells_range+1
+        self.nxcells = (
+            int(2 * xdim / self.grid_spacing)
+            if centralized
+            else 2 * self.cells_range + 1
+        )
+        self.nycells = (
+            int(2 * ydim / self.grid_spacing)
+            if centralized
+            else 2 * self.cells_range + 1
+        )
         self.device = device
 
         self.x_grid = torch.linspace(self.xmin, self.xmax, self.nxcells)
@@ -627,7 +654,11 @@ class VoronoiCoverage:
         self.xy_grid_tot = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
 
     def mirror(self, points, xmin, xmax, ymin, ymax):
-        square_corners = torch.tensor([(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)], device=self.device, dtype=torch.float32)
+        square_corners = torch.tensor(
+            [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)],
+            device=self.device,
+            dtype=torch.float32,
+        )
         edges = torch.roll(square_corners, shifts=-1, dims=0) - square_corners
 
         # normalize edge vectors
@@ -637,18 +668,25 @@ class VoronoiCoverage:
         n_points = points.shape[0]
         n_edges = square_corners.shape[0]
 
-        points_expanded = points.unsqueeze(1).expand(-1, n_edges, -1)       # [n_pts, n_edges, 2]
-        edge_starts_expanded = square_corners.unsqueeze(0).expand(n_points, -1, -1)     # [n_pts, n_edges, 2]
-        edge_directions_expanded = normalized_edges.unsqueeze(0).expand(n_points, -1, -1)
+        points_expanded = points.unsqueeze(1).expand(
+            -1, n_edges, -1
+        )  # [n_pts, n_edges, 2]
+        edge_starts_expanded = square_corners.unsqueeze(0).expand(
+            n_points, -1, -1
+        )  # [n_pts, n_edges, 2]
+        edge_directions_expanded = normalized_edges.unsqueeze(0).expand(
+            n_points, -1, -1
+        )
 
         relative_points = points_expanded - edge_starts_expanded
-        projections = torch.sum(relative_points * edge_directions_expanded, dim=2, keepdim=True)
+        projections = torch.sum(
+            relative_points * edge_directions_expanded, dim=2, keepdim=True
+        )
         reflected_points = relative_points - 2 * projections
         mirrored_points = reflected_points + edge_starts_expanded
 
         mirrored_points = mirrored_points.reshape(-1, 2)
         return mirrored_points.tolist()
-        
 
     def partitioning(self, agents: torch.Tensor):
         self.worlds_num = agents.shape[0]
@@ -658,21 +696,24 @@ class VoronoiCoverage:
         self.vertices = [regions_single_env] * self.worlds_num
         self.voronois = [None] * self.worlds_num
 
-
-        dummy_points = torch.zeros((5*robots_num, self.worlds_num, 2))
+        dummy_points = torch.zeros((5 * robots_num, self.worlds_num, 2))
         dummy_points[:robots_num, :, :] = self.agents
         for i in range(self.worlds_num):
-            mirrored_points = self.mirror(self.agents[:, i, :], self.xmin, self.xmax, self.ymin, self.ymax)
+            mirrored_points = self.mirror(
+                self.agents[:, i, :], self.xmin, self.xmax, self.ymin, self.ymax
+            )
             mir_pts = torch.tensor(mirrored_points)
             dummy_points[robots_num:, i, :] = mir_pts
-        
+
         # Voronoi diagram
         for j in range(self.worlds_num):
             vor = Voronoi(dummy_points[:, j, :].cpu().detach().numpy())
             # vor.filtered_points = self.agents[:, j, :].cpu().detach().numpy()
             # regions = [vor.point_region[i] for i in range(self.robots_num)]
             self.regions[j] = [vor.regions[i] for i in vor.point_region[:robots_num]]
-            self.vertices[j] = [[vor.vertices[v] for v in self.regions[j]]]             #(n_env, n_robots, n_verts)
+            self.vertices[j] = [
+                [vor.vertices[v] for v in self.regions[j]]
+            ]  # (n_env, n_robots, n_verts)
             # for v in range(self.regions):
             #     self.vertices[j][i].append(vor.vertices[i])
             self.voronois[j] = vor
@@ -680,22 +721,23 @@ class VoronoiCoverage:
     def partitioning_single_env(self, agents: torch.Tensor):
         robots_num = agents.shape[0]
 
-        dummy_points = torch.zeros((5*robots_num, 2))
+        dummy_points = torch.zeros((5 * robots_num, 2))
         dummy_points[:robots_num, :] = agents
-        mirrored_points = self.mirror(agents, self.xmin, self.xmax, self.ymin, self.ymax)
+        mirrored_points = self.mirror(
+            agents, self.xmin, self.xmax, self.ymin, self.ymax
+        )
         mir_pts = torch.tensor(mirrored_points)
         dummy_points[robots_num:, :] = mir_pts
-        
+
         # Voronoi diagram
         vor = Voronoi(dummy_points.cpu().detach().numpy())
         # vor.filtered_points = self.agents[:, j, :].cpu().detach().numpy()
         # regions = [vor.point_region[i] for i in range(self.robots_num)]
-        regions = [vor.regions[i] for i in vor.point_region[:robots_num]]
-        vertices = [vor.vertices[v] for v in regions]             #(n_env, n_robots, n_verts)
+        # regions = [vor.regions[i] for i in vor.point_region[:robots_num]]
+        # vertices = [vor.vertices[v] for v in regions]  # (n_env, n_robots, n_verts)
         # for v in range(self.regions):
         #     self.vertices[j][i].append(vor.vertices[i])
         return vor
-
 
     def getPointsInRegion(self, region, xy_grid):
         p = Path(region)
@@ -712,10 +754,18 @@ class VoronoiCoverage:
             # verts = [[vor.vertices[v] for v in vor.regions[region]] for region in regions]
             bool_val = self.getPointsInRegion(verts)
             weights = self.pdf[i][bool_val]
-            reward[i] = torch.sum(weights * torch.linalg.norm(self.xy_grid[bool_val] - self.agents[agent_id, i], axis=1)**2) * self.grid_spacing**2
+            reward[i] = (
+                torch.sum(
+                    weights
+                    * torch.linalg.norm(
+                        self.xy_grid[bool_val] - self.agents[agent_id, i], axis=1
+                    )
+                    ** 2
+                )
+                * self.grid_spacing**2
+            )
 
         return -reward
-
 
     def computeCoverageFunctionSingleEnv(self, voro, pdf_global, agent_id, env_id):
         region = voro.point_region[agent_id]
@@ -724,9 +774,14 @@ class VoronoiCoverage:
         robot = torch.from_numpy(robot).to(self.device)
         bool_val = self.getPointsInRegion(verts, self.xy_grid_tot)
         weights = pdf_global[bool_val]
-        reward = torch.sum(weights * torch.linalg.norm(self.xy_grid_tot[bool_val] - robot, axis=1)**2) * self.grid_spacing**2
+        reward = (
+            torch.sum(
+                weights
+                * torch.linalg.norm(self.xy_grid_tot[bool_val] - robot, axis=1) ** 2
+            )
+            * self.grid_spacing**2
+        )
         return -reward
-
 
     def computeCentroid(self, agent_id):
         centroids = torch.zeros((self.worlds_num, 2), device=self.device)
@@ -740,7 +795,7 @@ class VoronoiCoverage:
             A = torch.sum(weights) * dA
             Cx = torch.sum(weights * self.xy_grid[:, 0][bool_val]) * dA
             Cy = torch.sum(weights * self.xy_grid[:, 1][bool_val]) * dA
-            centroids[i, :] = torch.tensor([Cx/A, Cy/A])
+            centroids[i, :] = torch.tensor([Cx / A, Cy / A])
 
         return centroids
 
@@ -751,8 +806,16 @@ class VoronoiCoverage:
         if self.centralized:
             xy_grid = self.xy_grid
         else:
-            x_grid = torch.linspace(robot[0]-self.cells_range*self.grid_spacing, robot[0]+self.cells_range*self.grid_spacing, self.nxcells)
-            y_grid = torch.linspace(robot[1]-self.cells_range*self.grid_spacing, robot[1]+self.cells_range*self.grid_spacing, self.nycells)
+            x_grid = torch.linspace(
+                robot[0] - self.cells_range * self.grid_spacing,
+                robot[0] + self.cells_range * self.grid_spacing,
+                self.nxcells,
+            )
+            y_grid = torch.linspace(
+                robot[1] - self.cells_range * self.grid_spacing,
+                robot[1] + self.cells_range * self.grid_spacing,
+                self.nycells,
+            )
             xg, yg = torch.meshgrid(x_grid, y_grid)
             xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
         bool_val = self.getPointsInRegion(verts, xy_grid)
@@ -761,6 +824,6 @@ class VoronoiCoverage:
         A = torch.sum(weights) * dA
         Cx = torch.sum(weights * xy_grid[:, 0][bool_val]) * dA
         Cy = torch.sum(weights * xy_grid[:, 1][bool_val]) * dA
-        centroid = torch.tensor([Cx/A, Cy/A]).to(self.device)
+        centroid = torch.tensor([Cx / A, Cy / A]).to(self.device)
 
         return centroid
