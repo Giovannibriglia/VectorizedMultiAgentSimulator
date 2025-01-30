@@ -47,6 +47,7 @@ class Scenario(BaseScenario):
         self.angle_end = kwargs.pop("angle_end", 2*torch.pi+0.05)
         self.n_rays = kwargs.pop("n_rays", 20)
         self.cells_range = kwargs.pop("cells_range", 3)             # number of cells sensed on each side
+        self.centralized = kwargs.pop("centralized", False)
         ScenarioUtils.check_kwargs_consumed(kwargs)
 
         assert not (self.spawn_same_pos and self.collisions)
@@ -72,7 +73,7 @@ class Scenario(BaseScenario):
 
         self.pdf = [None] * batch_dim
         self.Kp = 0.8                                   # proportional gain
-        self.voronoi = None
+        self.voronoi = VoronoiCoverage(self.grid_spacing, self.cells_range, self.xdim, self.ydim, device, self.centralized)
 
         # Make world
         world = World(
@@ -552,7 +553,6 @@ class VoronoiPolicy(BaseHeuristicPolicy):
         # env = kwargs["env"]
         self.grid_spacing = env.scenario.grid_spacing
         self.cells_range = env.scenario.cells_range
-        self.centralized = False
         self.xdim = env.scenario.xdim
         self.ydim = env.scenario.ydim
         self.device = env.world.device
@@ -561,8 +561,10 @@ class VoronoiPolicy(BaseHeuristicPolicy):
         self.angle_end = env.scenario.angle_end
         self.lidar_range = env.scenario.lidar_range
         self.Kp = 0.8
-        self.voronoi = VoronoiCoverage(self.grid_spacing, self.cells_range, self.xdim, self.ydim, self.device, self.centralized)
-        env.scenario.voronoi = self.voronoi
+        # self.voronoi = VoronoiCoverage(self.grid_spacing, self.cells_range, self.xdim, self.ydim, self.device, self.centralized)
+        # env.scenario.voronoi = self.voronoi
+        self.voronoi = env.scenario.voronoi
+        self.centralized = env.scenario.centralized
 
     def compute_action(self, observation: torch.Tensor, u_range: float) -> torch.Tensor:
         # extract info from observation
