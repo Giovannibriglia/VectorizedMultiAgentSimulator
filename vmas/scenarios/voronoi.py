@@ -320,14 +320,15 @@ class Scenario(BaseScenario):
                         )
                 self.sampling_rew = reward.sum(-1)
         else:
+            single_rew = torch.zeros((self.world.batch_dim))
             for j in range(self.world.batch_dim):
                 robots_j = robots[:, j, :]
                 vor = self.voronoi.partitioning_single_env(robots_j)
-                self.single_rew = self.voronoi.computeCoverageFunctionSingleEnv(
+                single_rew[j] = self.voronoi.computeCoverageFunctionSingleEnv(
                     vor, self.pdf[j], self.world.agents.index(agent), j
                 )
 
-        return self.sampling_rew if self.shared_rew else self.single_rew.unsqueeze(-1)
+        return self.sampling_rew if self.shared_rew else single_rew.unsqueeze(-1)
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
