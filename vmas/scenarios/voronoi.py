@@ -397,9 +397,12 @@ class Scenario(BaseScenario):
             )
         ]
 
-        # Compute Voronoi regions
-        vor = self._compute_voronoi_regions(env_index)
-        geoms = self._plot_voronoi_regions(vor, geoms)
+        try:
+            # Compute Voronoi regions
+            vor = self._compute_voronoi_regions(env_index)
+            geoms = self._plot_voronoi_regions(vor, geoms)
+        except Exception as e:
+            print(f"Unable to compute and plot voronoi regions: {e}")
 
         # Communication lines
         for i, agent1 in enumerate(self.world.agents):
