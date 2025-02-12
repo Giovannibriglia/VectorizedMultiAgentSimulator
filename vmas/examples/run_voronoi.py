@@ -7,6 +7,9 @@ from pathlib import Path
 from typing import Type
 
 import torch
+from matplotlib import pyplot as plt
+
+from tqdm import tqdm
 
 from vmas import make_env
 from vmas.simulator.heuristic_policy import BaseHeuristicPolicy, RandomPolicy
@@ -22,7 +25,7 @@ sys.path.append(os.path.dirname(vmas_dir))
 # from algorithms.VoronoiCoverage import VoronoiCoverage
 
 mydev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print("device; ", mydev)
+print("device: ", mydev)
 
 
 def run_heuristic(
@@ -46,6 +49,7 @@ def run_heuristic(
         device=device,
         continuous_actions=True,
         wrapper=None,
+        shared_rew=False,
         # Environment specific variables
         **env_kwargs,
     )
@@ -58,21 +62,29 @@ def run_heuristic(
     total_reward = 0
     n_agents = len(env.agents)
     obs = torch.stack(env.reset(), dim=0)
-    for _ in range(n_steps):
+
+    rewards_for_plot = torch.zeros((n_steps, n_envs, n_agents))
+    global_rewards = []
+    for timestep in tqdm(range(n_steps)):
         step += 1
-        print("Step ", step)
         actions = [None] * n_agents
         # robots = [a.state.pos for a in env.agents]
         # robots = torch.stack(robots).to(device)
         # voro = VoronoiCoverage(robots, env.scenario.pdf, env.scenario.grid_spacing, env.scenario.xdim, env.scenario.ydim, env.scenario.world.device, centralized=True)
         # voro.partitioning()
+        # t_act = time.time()
         for i in range(n_agents):
             actions[i] = policy.compute_action(obs[i], u_range=env.agents[i].u_range)
+            # print(f"{i}", actions[i])
+        # print("t action: ", time.time()-t_act)
         obs, rews, dones, info = env.step(actions)
         rewards = torch.stack(rews, dim=1)
         global_reward = rewards.mean(dim=1)
         mean_global_reward = global_reward.mean(dim=0)
-        print("Mean reward: ", mean_global_reward)
+        # print("Mean reward: ", mean_global_reward)
+        global_rewards.append(mean_global_reward)
+        rewards_for_plot[timestep] = rewards
+
         total_reward += mean_global_reward
         if render:
             frame_list.append(
@@ -82,6 +94,16 @@ def run_heuristic(
                     visualize_when_rgb=True,
                 )
             )
+
+    env_n = 0
+    for n in range(n_agents):
+        plt.plot(
+            rewards_for_plot[:, env_n, n].cpu().numpy(),
+            label=f"ag{n}: {torch.mean(rewards_for_plot[:, env_n, n]):.3f}",
+        )
+    plt.plot(global_rewards, label="global")
+    plt.legend(loc="best")
+    plt.show()
 
     total_time = time.time() - init_time
     if render and save_render:
@@ -99,8 +121,8 @@ if __name__ == "__main__":
     run_heuristic(
         scenario_name="voronoi",
         heuristic=VoronoiPolicy,
-        n_envs=2,
-        n_steps=500,
+        n_envs=1,
+        n_steps=2000,
         render=True,
-        save_render=False,
+        save_render=True,
     )

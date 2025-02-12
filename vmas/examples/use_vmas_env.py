@@ -92,7 +92,7 @@ def use_vmas_env(
                 actions.update({agent.name: action})
             else:
                 actions.append(action)
-
+        print(actions)
         obs, rews, dones, info = env.step(actions)
 
         if render:
@@ -116,11 +116,11 @@ def use_vmas_env(
 
 if __name__ == "__main__":
     use_vmas_env(
-        scenario_name="voronoi",
+        scenario_name="sampling",
         render=True,
         save_render=False,
         random_action=True,
-        continuous_actions=False,
+        continuous_actions=True,
         # Environment specific
         n_agents=4,
     )
