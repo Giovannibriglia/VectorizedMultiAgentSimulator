@@ -33,10 +33,10 @@ def run_heuristic(
     heuristic: Type[BaseHeuristicPolicy] = RandomPolicy,
     n_steps: int = 200,
     n_envs: int = 32,
-    env_kwargs: dict = None,
     render: bool = False,
     save_render: bool = False,
     device: str = mydev,
+    **env_kwargs,
 ):
     assert not (save_render and not render), "To save the video you have to render it"
     if env_kwargs is None:
@@ -124,5 +124,7 @@ if __name__ == "__main__":
         n_envs=1,
         n_steps=2000,
         render=True,
-        save_render=True,
+        save_render=False,
+        centralized=True,
+        n_gaussians=1,
     )

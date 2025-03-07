@@ -134,6 +134,11 @@ class Scenario(BaseScenario):
             for cov in self.covs
         ]
 
+        x_grid = torch.linspace(-self.xdim, self.xdim, self.n_x_cells)
+        y_grid = torch.linspace(-self.ydim, self.ydim, self.n_y_cells)
+        xg, yg = torch.meshgrid(x_grid, y_grid)
+        self.xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(world.device)
+
         return world
 
     def reset_world_at(self, env_index: int = None):
@@ -163,13 +168,9 @@ class Scenario(BaseScenario):
             for loc, cov_matrix in zip(self.locs, self.cov_matrices)
         ]
 
-        x_grid = torch.linspace(-self.xdim, self.xdim, self.n_x_cells)
-        y_grid = torch.linspace(-self.ydim, self.ydim, self.n_y_cells)
-        xg, yg = torch.meshgrid(x_grid, y_grid)
-        xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.world.device)
         # xy_grid = xy_grid.unsqueeze(0).expand(self.world.batch_dim, -1, -1)
         self.pdf = [
-            self.sample_single_env(xy_grid, i) for i in range(self.world.batch_dim)
+            self.sample_single_env(self.xy_grid, i) for i in range(self.world.batch_dim)
         ]
 
         if env_index is None:
@@ -348,23 +349,38 @@ class Scenario(BaseScenario):
         #     [-self.grid_spacing, self.grid_spacing],
         #     [-self.grid_spacing, 0]]
 
-        deltas = []
-        for i in range(-self.cells_range, self.cells_range + 1):
-            for j in range(-self.cells_range, self.cells_range + 1):
-                deltas.append([i * self.grid_spacing, j * self.grid_spacing])
+        if not self.centralized:
+            deltas = []
+            for i in range(-self.cells_range, self.cells_range + 1):
+                for j in range(-self.cells_range, self.cells_range + 1):
+                    deltas.append([i * self.grid_spacing, j * self.grid_spacing])
 
-        for delta in deltas:
-            # occupied cell + ccw cells from bottom left
-            pos = agent.state.pos + torch.tensor(
-                delta,
-                device=self.world.device,
-                dtype=torch.float32,
-            )
-            sample = self.sample(
-                pos,
-                update_sampled_flag=False,
-            ).unsqueeze(-1)
-            observations.append(sample)
+            for delta in deltas:
+                # occupied cell + ccw cells from bottom left
+                pos = agent.state.pos + torch.tensor(
+                    delta,
+                    device=self.world.device,
+                    dtype=torch.float32,
+                )
+                sample = self.sample(
+                    pos,
+                    update_sampled_flag=False,
+                ).unsqueeze(-1)
+                observations.append(sample)
+        else:
+            for x in np.linspace(-self.xdim, self.xdim, self.n_x_cells):
+                for y in np.linspace(-self.ydim, self.ydim, self.n_y_cells):
+                    xy = torch.tensor(
+                        [[x, y]],
+                        device=self.world.device,
+                        dtype=torch.float32,
+                    )
+                    sample = self.sample(
+                        xy,
+                        update_sampled_flag=False,
+                    ).unsqueeze(-1)
+
+                    observations.append(sample)
 
         return torch.cat(
             observations,
@@ -589,25 +605,44 @@ class VoronoiPolicy(BaseHeuristicPolicy):
         pdf = observation[:, (4 + self.n_rays) :]
         pos = observation[:, :2]
         # vel = observation[:, 2:4]
-        lidar_values = observation[:, 4 : 4 + self.n_rays]
+        lidar_values = observation[:, 4 : 4 + self.n_rays]  # [n_envs, n_rays]
 
-        # get detected robots relative positions
-        angles = torch.linspace(
-            self.angle_start, self.angle_end, self.n_rays, device=self.device
-        )
-        x = lidar_values * torch.cos(angles)
-        y = lidar_values * torch.sin(angles)
-        robots_rel = torch.stack((x, y), dim=-1)  # [n_envs, n_rays, 2]
-        # detected_mask = lidar_values != self.lidar_range  # [n_envs, n_rays]
-        points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
-        robots = points + robots_rel
-        points = torch.cat((pos.unsqueeze(1), robots), dim=1)  # [n_envs, n_rays+1, 2]
+        if lidar_values.numel() > 0:
+            # get detected robots relative positions
+            angles = torch.linspace(
+                self.angle_start,
+                self.angle_end,
+                lidar_values.shape[1],
+                device=self.device,
+            )
+            x = lidar_values * torch.cos(angles)
+            y = lidar_values * torch.sin(angles)
+            robots_rel = torch.stack((x, y), dim=-1)  # [n_envs, n_rays, 2]
+            # detected_mask = lidar_values != self.lidar_range  # [n_envs, n_rays]
+
+            indices_robots_too_far = torch.where(lidar_values == self.lidar_range)
+
+            for id, index_1 in enumerate(indices_robots_too_far[1]):
+                index_0 = int(indices_robots_too_far[0][id])
+                robots_rel[index_0, index_1, :] = torch.tensor(
+                    [100, 100], device=self.device
+                )
+
+            points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
+            robots = points + robots_rel
+            points = torch.cat(
+                (pos.unsqueeze(1), robots), dim=1
+            )  # [n_envs, n_robot_tot, 2]
+        else:
+            points = pos.unsqueeze(1)
+
         actions = torch.zeros((pos.shape[0], 2))
         for i in range(pos.shape[0]):
             voro = self.voronoi.partitioning_single_env(points[i])
             centroid = self.voronoi.computeCentroidSingleEnv(voro, pdf[i])
 
             res_action = self.Kp * (centroid - pos[i, :])
+
             if torch.isnan(res_action).any().item():
                 print("action=nan: ", res_action)
             actions[i, :] = (
@@ -618,9 +653,7 @@ class VoronoiPolicy(BaseHeuristicPolicy):
                 else res_action
             )
 
-        return actions
-
-        # output: [n_envs, 2]
+        return torch.clip(actions, -u_range, u_range)  # output: [n_envs, 2]
 
 
 if __name__ == "__main__":
@@ -668,7 +701,7 @@ class VoronoiCoverage:
         xg, yg = torch.meshgrid(xg, yg)
         self.xy_grid_tot = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
 
-    def mirror(self, points, xmin, xmax, ymin, ymax):
+    """def mirror(self, points, xmin, xmax, ymin, ymax):
         square_corners = torch.tensor(
             [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)],
             device=self.device,
@@ -701,7 +734,61 @@ class VoronoiCoverage:
         mirrored_points = reflected_points + edge_starts_expanded
 
         mirrored_points = mirrored_points.reshape(-1, 2)
-        return mirrored_points.tolist()
+        return mirrored_points.tolist()"""
+
+    def mirror(self, points, x_min, x_max, y_min, y_max):
+        mirrored_points = []
+
+        points_np = points.cpu().detach().numpy()
+
+        # Define the corners of the square
+        square_corners = [
+            (x_min, y_min),
+            (x_max, y_min),
+            (x_max, y_max),
+            (x_min, y_max),
+        ]
+
+        # Mirror points across each edge of the square
+        for edge_start, edge_end in zip(
+            square_corners, square_corners[1:] + [square_corners[0]]
+        ):
+            edge_vector = (edge_end[0] - edge_start[0], edge_end[1] - edge_start[1])
+
+            for point in points_np:
+                # Calculate the vector from the edge start to the point
+                point_vector = (point[0] - edge_start[0], point[1] - edge_start[1])
+
+                # Calculate the mirrored point by reflecting across the edge
+                mirrored_vector = (
+                    point_vector[0]
+                    - 2
+                    * (
+                        point_vector[0] * edge_vector[0]
+                        + point_vector[1] * edge_vector[1]
+                    )
+                    / (edge_vector[0] ** 2 + edge_vector[1] ** 2)
+                    * edge_vector[0],
+                    point_vector[1]
+                    - 2
+                    * (
+                        point_vector[0] * edge_vector[0]
+                        + point_vector[1] * edge_vector[1]
+                    )
+                    / (edge_vector[0] ** 2 + edge_vector[1] ** 2)
+                    * edge_vector[1],
+                )
+
+                # Translate the mirrored vector back to the absolute coordinates
+                mirrored_point = (
+                    edge_start[0] + mirrored_vector[0],
+                    edge_start[1] + mirrored_vector[1],
+                )
+
+                # Add the mirrored point to the result list
+                mirrored_points.append(mirrored_point)
+
+        return mirrored_points
 
     def partitioning(self, agents: torch.Tensor):
         self.worlds_num = agents.shape[0]
