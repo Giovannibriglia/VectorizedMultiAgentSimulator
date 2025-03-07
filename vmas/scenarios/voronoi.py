@@ -307,30 +307,72 @@ class Scenario(BaseScenario):
                     self.max_pdf = torch.maximum(self.max_pdf, sample)
 
     def reward(self, agent: Agent) -> Tensor:
-        is_first = self.world.agents.index(agent) == 0
-        robots = [a.state.pos for a in self.world.agents]
-        robots = torch.stack(robots).to(self.world.device)
-        reward = torch.zeros((self.world.batch_dim, self.n_agents))
-        if self.shared_rew:
-            if is_first:
-                for j in range(self.world.batch_dim):
-                    robots_j = robots[:, j, :]
-                    vor = self.voronoi.partitioning_single_env(robots_j)
-                    for i, a in enumerate(self.world.agents):
-                        reward[j, i] = self.voronoi.computeCoverageFunctionSingleEnv(
-                            vor, self.pdf[j], self.world.agents.index(a), j
-                        )
-                self.sampling_rew = reward.sum(-1)
-        else:
-            single_rew = torch.zeros((self.world.batch_dim))
-            for j in range(self.world.batch_dim):
-                robots_j = robots[:, j, :]
-                vor = self.voronoi.partitioning_single_env(robots_j)
-                single_rew[j] = self.voronoi.computeCoverageFunctionSingleEnv(
-                    vor, self.pdf[j], self.world.agents.index(agent), j
-                )
 
-        return self.sampling_rew if self.shared_rew else single_rew  # .unsqueeze(-1)
+        observation = self.observation(
+            agent
+        )  # pos, vel, lidar, pdf(centralized or decentralized)
+        # extract info from observation
+        pdf = observation[:, (4 + self.n_rays) :]
+        pos = observation[:, :2]
+        # vel = observation[:, 2:4]
+        lidar_values = observation[:, 4 : 4 + self.n_rays]  # [n_envs, n_rays]
+
+        # get detected robots relative positions
+        angles = torch.linspace(
+            self.angle_start,
+            self.angle_end,
+            lidar_values.shape[1],
+            device=self.world.device,
+        )
+        x = lidar_values * torch.cos(angles)
+        y = lidar_values * torch.sin(angles)
+        robots_rel = torch.stack((x, y), dim=-1)  # [n_envs, n_rays, 2]
+        # detected_mask = lidar_values != self.lidar_range  # [n_envs, n_rays]
+
+        indices_robots_too_far = torch.where(lidar_values == self.lidar_range)
+
+        for id, index_1 in enumerate(indices_robots_too_far[1]):
+            index_0 = int(indices_robots_too_far[0][id])
+            robots_rel[index_0, index_1, :] = torch.tensor(
+                [100, 100], device=self.world.device
+            )
+
+        points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
+        robots = points + robots_rel
+        points = torch.cat(
+            (pos.unsqueeze(1), robots), dim=1
+        )  # [n_envs, n_robot_tot, 2]
+
+        if self.shared_rew:
+            is_first = self.world.agents.index(agent) == 0
+            rewards = torch.zeros(
+                (self.world.batch_dim, self.n_agents), device=self.world.device
+            )
+            if is_first:
+                for env_idx in range(self.world.batch_dim):
+                    robots_j = points[env_idx, :, :]
+                    voro = self.voronoi.partitioning_single_env(robots_j)
+                    for ag_idx in range(self.n_agents):
+                        rewards[
+                            env_idx, ag_idx
+                        ] = self.voronoi.computeCoverageFunctionSingleEnv(
+                            voro, pdf[env_idx], 0, env_idx
+                        )
+
+                self.sampling_rew = rewards.sum(-1)
+        else:
+            rewards = torch.zeros(self.world.batch_dim, device=self.world.device)
+            for env_idx in range(self.world.batch_dim):
+                robots_j = points[env_idx, :, :]
+                vor = self.voronoi.partitioning_single_env(robots_j)
+                rewards[env_idx] = self.voronoi.computeCoverageFunctionSingleEnv(
+                    vor, pdf[env_idx], 0, env_idx
+                )
+            """print(
+                f"Agent: {self.world.agents.index(agent)} - \n reward: {rewards} - \n robots_j: {points[0, :, :]} - \n pdf[0]: {pdf[0]}"
+            )"""
+
+        return self.sampling_rew if self.shared_rew else rewards
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [

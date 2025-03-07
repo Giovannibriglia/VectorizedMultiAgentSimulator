@@ -49,7 +49,6 @@ def run_heuristic(
         device=device,
         continuous_actions=True,
         wrapper=None,
-        shared_rew=False,
         # Environment specific variables
         **env_kwargs,
     )
@@ -78,6 +77,7 @@ def run_heuristic(
             # print(f"{i}", actions[i])
         # print("t action: ", time.time()-t_act)
         obs, rews, dones, info = env.step(actions)
+        print(rews)
         rewards = torch.stack(rews, dim=1)
         global_reward = rewards.mean(dim=1)
         mean_global_reward = global_reward.mean(dim=0)
@@ -126,5 +126,6 @@ if __name__ == "__main__":
         render=True,
         save_render=False,
         centralized=True,
+        shared_rew=False,
         n_gaussians=1,
     )
