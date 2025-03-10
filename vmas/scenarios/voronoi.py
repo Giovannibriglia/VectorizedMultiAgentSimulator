@@ -453,6 +453,7 @@ class Scenario(BaseScenario):
                 f=self.density_for_plot(env_index=env_index),
                 plot_range=(self.xdim, self.ydim),
                 cmap_alpha=self.alpha_plot,
+                cmap_name="plasma",
             )
         ]
 
@@ -664,11 +665,31 @@ class VoronoiPolicy(BaseHeuristicPolicy):
 
             indices_robots_too_far = torch.where(lidar_values == self.lidar_range)
 
-            for id, index_1 in enumerate(indices_robots_too_far[1]):
+            """for id, index_1 in enumerate(indices_robots_too_far[1]):
                 index_0 = int(indices_robots_too_far[0][id])
+                random_far_value = (
+                    100 + id * 10
+                )  # Ensures different values, starting from 100
                 robots_rel[index_0, index_1, :] = torch.tensor(
-                    [100, 100], device=self.device
-                )
+                    [random_far_value, random_far_value], device=self.device
+                )"""
+            ids = torch.arange(
+                len(indices_robots_too_far[1]), device=self.device, dtype=torch.float32
+            )  # Ensure float type
+            random_far_values = (100 + ids * 10).to(
+                robots_rel.dtype
+            )  # Ensure dtype matches `robots_rel`
+
+            index_0 = indices_robots_too_far[0].long()  # Ensure indices are long type
+            index_1 = indices_robots_too_far[1].long()
+
+            # Create a tensor of shape [num_ids, 2] with [n_robots_too_far, n_robots_too_far] values
+            random_far_values = random_far_values.unsqueeze(1).repeat(
+                1, 2
+            )  # Expand to [n_robots_too_far, n_robots_too_far] format
+
+            # Assign in one operation
+            robots_rel[index_0, index_1, :] = random_far_values
 
             points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
             robots = points + robots_rel
