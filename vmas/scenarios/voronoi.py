@@ -800,58 +800,48 @@ class VoronoiCoverage:
         return mirrored_points.tolist()"""
 
     def mirror(self, points, x_min, x_max, y_min, y_max):
-        mirrored_points = []
+        points_np = (
+            points.cpu().detach().numpy()
+        )  # Convert PyTorch tensor to NumPy array
 
-        points_np = points.cpu().detach().numpy()
+        # Define the square corners and edges
+        square_corners = np.array(
+            [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
+        )
 
-        # Define the corners of the square
-        square_corners = [
-            (x_min, y_min),
-            (x_max, y_min),
-            (x_max, y_max),
-            (x_min, y_max),
-        ]
+        edges_start = square_corners
+        edges_end = np.roll(
+            square_corners, shift=-1, axis=0
+        )  # Circular shift to form edges
 
-        # Mirror points across each edge of the square
-        for edge_start, edge_end in zip(
-            square_corners, square_corners[1:] + [square_corners[0]]
-        ):
-            edge_vector = (edge_end[0] - edge_start[0], edge_end[1] - edge_start[1])
+        # Compute edge vectors
+        edge_vectors = edges_end - edges_start  # Shape: (4, 2)
 
-            for point in points_np:
-                # Calculate the vector from the edge start to the point
-                point_vector = (point[0] - edge_start[0], point[1] - edge_start[1])
+        # Compute vectors from edge start points to given points (broadcasting)
+        point_vectors = (
+            points_np[:, None, :] - edges_start[None, :, :]
+        )  # Shape: (n_points, 4, 2)
 
-                # Calculate the mirrored point by reflecting across the edge
-                mirrored_vector = (
-                    point_vector[0]
-                    - 2
-                    * (
-                        point_vector[0] * edge_vector[0]
-                        + point_vector[1] * edge_vector[1]
-                    )
-                    / (edge_vector[0] ** 2 + edge_vector[1] ** 2)
-                    * edge_vector[0],
-                    point_vector[1]
-                    - 2
-                    * (
-                        point_vector[0] * edge_vector[0]
-                        + point_vector[1] * edge_vector[1]
-                    )
-                    / (edge_vector[0] ** 2 + edge_vector[1] ** 2)
-                    * edge_vector[1],
-                )
+        # Compute dot products between point_vectors and edge_vectors
+        dot_products = np.sum(
+            point_vectors * edge_vectors, axis=-1
+        )  # Shape: (n_points, 4)
+        edge_lengths_sq = np.sum(edge_vectors**2, axis=-1)  # Shape: (4,)
 
-                # Translate the mirrored vector back to the absolute coordinates
-                mirrored_point = (
-                    edge_start[0] + mirrored_vector[0],
-                    edge_start[1] + mirrored_vector[1],
-                )
+        # Compute reflection coefficients
+        coeffs = 2 * (dot_products / edge_lengths_sq)  # Shape: (n_points, 4)
 
-                # Add the mirrored point to the result list
-                mirrored_points.append(mirrored_point)
+        # Compute mirrored vectors
+        mirrored_vectors = (
+            point_vectors - coeffs[:, :, None] * edge_vectors
+        )  # Shape: (n_points, 4, 2)
 
-        return mirrored_points
+        # Compute final mirrored points
+        mirrored_points = (
+            edges_start[None, :, :] + mirrored_vectors
+        )  # Shape: (n_points, 4, 2)
+
+        return mirrored_points.reshape(-1, 2)  # Flatten to return a list of points
 
     def partitioning(self, agents: torch.Tensor):
         self.worlds_num = agents.shape[0]
