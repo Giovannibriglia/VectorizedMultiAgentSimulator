@@ -333,8 +333,8 @@ class Scenario(BaseScenario):
 
         for id, index_1 in enumerate(indices_robots_too_far[1]):
             index_0 = int(indices_robots_too_far[0][id])
-            robots_rel[index_0, index_1, :] = torch.tensor(
-                [100, 100], device=self.world.device
+            robots_rel[index_0, index_1, :] = torch.rand((2,)) * 3 + max(
+                self.xdim, self.ydim
             )
 
         points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
@@ -665,6 +665,12 @@ class VoronoiPolicy(BaseHeuristicPolicy):
 
             indices_robots_too_far = torch.where(lidar_values == self.lidar_range)
 
+            for id, index_1 in enumerate(indices_robots_too_far[1]):
+                index_0 = int(indices_robots_too_far[0][id])
+                robots_rel[index_0, index_1, :] = torch.rand((2,)) * 3 + max(
+                    self.xdim, self.ydim
+                )
+
             """for id, index_1 in enumerate(indices_robots_too_far[1]):
                 index_0 = int(indices_robots_too_far[0][id])
                 random_far_value = (
@@ -673,7 +679,7 @@ class VoronoiPolicy(BaseHeuristicPolicy):
                 robots_rel[index_0, index_1, :] = torch.tensor(
                     [random_far_value, random_far_value], device=self.device
                 )"""
-            ids = torch.arange(
+            """ids = torch.arange(
                 len(indices_robots_too_far[1]), device=self.device, dtype=torch.float32
             )  # Ensure float type
             random_far_values = (100 + ids * 10).to(
@@ -689,7 +695,7 @@ class VoronoiPolicy(BaseHeuristicPolicy):
             )  # Expand to [n_robots_too_far, n_robots_too_far] format
 
             # Assign in one operation
-            robots_rel[index_0, index_1, :] = random_far_values
+            robots_rel[index_0, index_1, :] = random_far_values"""
 
             points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
             robots = points + robots_rel
@@ -874,12 +880,21 @@ class VoronoiCoverage:
             self.voronois[j] = vor
 
     def partitioning_single_env(self, agents: torch.Tensor):
-        robots_num = agents.shape[0]
+
+        mask = (
+            (agents[:, 0] >= self.xmin)
+            & (agents[:, 0] <= self.xmax)
+            & (agents[:, 1] >= self.ymin)
+            & (agents[:, 1] <= self.ymax)
+        )
+        detected_agents = agents[mask]
+
+        robots_num = detected_agents.shape[0]
 
         dummy_points = torch.zeros((5 * robots_num, 2))
-        dummy_points[:robots_num, :] = agents
+        dummy_points[:robots_num, :] = detected_agents
         mirrored_points = self.mirror(
-            agents, self.xmin, self.xmax, self.ymin, self.ymax
+            detected_agents, self.xmin, self.xmax, self.ymin, self.ymax
         )
         mir_pts = torch.tensor(mirrored_points)
         dummy_points[robots_num:, :] = mir_pts

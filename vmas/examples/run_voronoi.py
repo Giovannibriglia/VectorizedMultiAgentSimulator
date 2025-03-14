@@ -82,7 +82,7 @@ def run_heuristic(
         global_reward = rewards.mean(dim=1)
         mean_global_reward = global_reward.mean(dim=0)
         # print("Mean reward: ", mean_global_reward)
-        global_rewards.append(mean_global_reward)
+        global_rewards.append(mean_global_reward.cpu().numpy())
         rewards_for_plot[timestep] = rewards
 
         total_reward += mean_global_reward
@@ -96,6 +96,7 @@ def run_heuristic(
             )
 
     env_n = 0
+    plt.figure(dpi=500)
     for n in range(n_agents):
         plt.plot(
             rewards_for_plot[:, env_n, n].cpu().numpy(),
@@ -122,10 +123,17 @@ if __name__ == "__main__":
         scenario_name="voronoi",
         heuristic=VoronoiPolicy,
         n_envs=1,
-        n_steps=2000,
+        n_steps=100,
         render=True,
-        save_render=False,
-        centralized=True,
+        save_render=True,
+        centralized=True,  # mdp or pomdp in terms of pdf; but robots are seen only if within the agent's lidar range. #TODO; error in compute coverage function
         shared_rew=False,
         n_gaussians=1,
+        grid_spacing=0.1,
     )
+
+# ok: [True, True], [
+
+
+# 1) centralized: True, shared_rew: True
+# 2) centralized: True, shared_rew: False
