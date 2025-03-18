@@ -421,7 +421,6 @@ class Scenario(BaseScenario):
                         xy,
                         update_sampled_flag=False,
                     ).unsqueeze(-1)
-
                     observations.append(sample)
 
         return torch.cat(
@@ -768,7 +767,11 @@ class VoronoiCoverage:
         xg = torch.linspace(self.xmin, self.xmax, nxcells_tot)
         yg = torch.linspace(self.ymin, self.ymax, nycells_tot)
         xg, yg = torch.meshgrid(xg, yg)
-        self.xy_grid_tot = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
+        self.xy_grid_tot = (
+            torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
+            if centralized
+            else self.xy_grid
+        )
 
     """def mirror(self, points, xmin, xmax, ymin, ymax):
         square_corners = torch.tensor(
@@ -1002,10 +1005,13 @@ class VoronoiCoverage:
             Cx = 0  # torch.sum(xy_grid[:, 0][bool_val]) * dA
             Cy = 0  # torch.sum(xy_grid[:, 1][bool_val]) * dA
 
-        centroid = torch.tensor([Cx / A, Cy / A]).to(self.device)
+        try:
+            centroid = torch.tensor([Cx / A, Cy / A], device=self.device)
+        except Exception:
+            centroid = torch.tensor([0.0, 0.0], device=self.device)
 
-        if torch.isnan(centroid).any().item():
-            # perchè i centroidi sono [nan, nan]
-            print(centroid)
+        assert not torch.isnan(centroid).any().item(), ValueError(
+            "centroids have nan values: ", centroid
+        )
 
         return centroid
