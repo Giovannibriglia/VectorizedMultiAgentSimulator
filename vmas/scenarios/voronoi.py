@@ -45,7 +45,7 @@ class Scenario(BaseScenario):
 
         self.angle_start = kwargs.pop("angle_start", 0.05)
         self.angle_end = kwargs.pop("angle_end", 2 * torch.pi + 0.05)
-        self.n_rays = kwargs.pop("n_rays", 20)
+        self.n_rays = kwargs.pop("n_rays", 200)
         self.cells_range = kwargs.pop(
             "cells_range", 3
         )  # number of cells sensed on each side
@@ -355,7 +355,7 @@ class Scenario(BaseScenario):
                     for ag_idx in range(self.n_agents):
                         rewards[
                             env_idx, ag_idx
-                        ] = self.voronoi.computeCoverageFunctionSingleEnv(
+                        ] = self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
                             voro, pdf[env_idx], 0, env_idx
                         )
 
@@ -365,7 +365,9 @@ class Scenario(BaseScenario):
             for env_idx in range(self.world.batch_dim):
                 robots_j = points[env_idx, :, :]
                 vor = self.voronoi.partitioning_single_env(robots_j)
-                rewards[env_idx] = self.voronoi.computeCoverageFunctionSingleEnv(
+                rewards[
+                    env_idx
+                ] = self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
                     vor, pdf[env_idx], 0, env_idx
                 )
             """print(
@@ -917,6 +919,20 @@ class VoronoiCoverage:
         bool_val = p.contains_points(xy_grid.cpu().detach().numpy())
         return bool_val
 
+    def extract_central_cells(self, matrix):
+        matrix = matrix.reshape((self.nxcells, self.nycells))
+        Nx = matrix.shape[0]
+        Ny = matrix.shape[1]
+        size_x = Nx // 2  # floor division
+        size_y = Ny // 2  # floor division
+        start_x = (Nx - size_x) // 2
+        end_x = start_x + size_x
+        start_y = (Ny - size_y) // 2
+        end_y = start_y + size_y
+        bool_matrix = np.zeros((self.nxcells, self.nycells))
+        bool_matrix[start_x:end_x, start_y:end_y] = 1
+        return bool_matrix.ravel()
+
     def computeCoverageFunction(self, agent_id):
         reward = torch.zeros((self.worlds_num))
         for i in range(self.worlds_num):
@@ -955,6 +971,44 @@ class VoronoiCoverage:
             * self.grid_spacing**2
         )
         return -reward
+
+    def computeHalfRangeCoverageFunctionSingleEnv(self, voro, pdf, agent_id, env_id):
+        region = voro.point_region[agent_id]
+        verts = [voro.vertices[v] for v in voro.regions[region]]
+        robot = voro.points[agent_id]
+        robot = torch.from_numpy(robot).to(self.device)
+        pdf_grid_x = torch.linspace(
+            robot[0] - self.cells_range * self.grid_spacing,
+            robot[0] + self.cells_range * self.grid_spacing,
+            self.nxcells,
+        )
+        pdf_grid_y = torch.linspace(
+            robot[1] - self.cells_range * self.grid_spacing,
+            robot[1] + self.cells_range * self.grid_spacing,
+            self.nycells,
+        )
+        xg, yg = torch.meshgrid(pdf_grid_x, pdf_grid_y)
+        pdf_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(self.device)
+        bool_val = self.getPointsInRegion(verts, pdf_grid)
+        pdf_int = self.extract_central_cells(pdf)
+        # bool_val = self.getPointsInRegion(verts, self.xy_grid_tot)
+        # print("bool val: ", bool_val.reshape((self.nxcells, self.nycells)))
+        in_and_int = np.logical_and(bool_val, pdf_int)
+        # print("int and int: ", in_and_int.reshape((self.nxcells, self.nycells)))
+        # in_and_ext = np.logical_and(bool_val, np.logical_not(pdf_int))
+        weights_in = pdf[in_and_int]
+        weights_ext = pdf[np.logical_not(pdf_int)]
+        reward = (
+            torch.sum(
+                weights_in
+                * torch.linalg.norm(pdf_grid[in_and_int] - robot, axis=1) ** 2
+            )
+            * self.grid_spacing**2
+            + (0.5 * self.cells_range * self.grid_spacing) ** 2
+            * torch.sum(weights_ext)
+            * self.grid_spacing**2
+        )
+        return reward
 
     """def computeCentroid(self, agent_id):
         centroids = torch.zeros((self.worlds_num, 2), device=self.device)

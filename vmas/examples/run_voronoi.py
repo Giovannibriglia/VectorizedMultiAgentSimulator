@@ -64,6 +64,7 @@ def run_heuristic(
 
     rewards_for_plot = torch.zeros((n_steps, n_envs, n_agents))
     global_rewards = []
+    sum_rewards = []
     for timestep in tqdm(range(n_steps)):
         step += 1
         actions = [None] * n_agents
@@ -80,9 +81,11 @@ def run_heuristic(
         print(rews)
         rewards = torch.stack(rews, dim=1)
         global_reward = rewards.mean(dim=1)
+        sum_reward = torch.sum(rewards)
         mean_global_reward = global_reward.mean(dim=0)
         # print("Mean reward: ", mean_global_reward)
         global_rewards.append(mean_global_reward.cpu().numpy())
+        sum_rewards.append(sum_reward.cpu().numpy())
         rewards_for_plot[timestep] = rewards
 
         total_reward += mean_global_reward
@@ -103,6 +106,7 @@ def run_heuristic(
             label=f"ag{n}: {torch.mean(rewards_for_plot[:, env_n, n]):.3f}",
         )
     plt.plot(global_rewards, label="global")
+    # plt.plot(sum_rewards, label="sum")
     plt.legend(loc="best")
     plt.show()
 
@@ -123,10 +127,10 @@ if __name__ == "__main__":
         scenario_name="voronoi",
         heuristic=VoronoiPolicy,
         n_envs=1,
-        n_steps=100,
+        n_steps=200,
         render=True,
         save_render=True,
-        centralized=True,  # mdp or pomdp in terms of pdf; but robots are seen only if within the agent's lidar range. #TODO; error in compute coverage function
+        centralized=False,  # mdp or pomdp in terms of pdf; but robots are seen only if within the agent's lidar range. #TODO; error in compute coverage function
         shared_rew=False,
         n_gaussians=1,
         grid_spacing=0.1,
