@@ -7,7 +7,6 @@ from tensordict.nn.distributions import NormalParamExtractor
 from torch import multiprocessing
 
 # Data collection
-import torchrl
 from torchrl.collectors import SyncDataCollector
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
@@ -61,13 +60,14 @@ entropy_eps = 1e-4  # coefficient of the entropy term in the PPO loss
 set_composite_lp_aggregate(False).set()
 print("Device: ", device)
 
-## Environment
+# Environment
 max_steps = 100  # Episode steps before done
 num_vmas_envs = (
     frames_per_batch // max_steps
 )  # Number of vectorized envs. frames_per_batch should be divisible by this number
 scenario_name = "voronoi"
-n_agents = 1
+n_agents = 3
+n_gaussians = 1
 
 env = VmasEnv(
     scenario=scenario_name,
@@ -77,6 +77,7 @@ env = VmasEnv(
     device=vmas_device,
     # Scenario kwargs
     n_agents=n_agents,  # These are custom kwargs that change for each VMAS scenario, see the VMAS repo to know more.
+    n_gaussians=n_gaussians,
 )
 
 print("action_spec:", env.full_action_spec)
@@ -94,13 +95,13 @@ env = TransformedEnv(
 check_env_specs(env)
 
 
-## Rollout
+# Rollout
 n_rollout_steps = 5
 rollout = env.rollout(n_rollout_steps)
 print("rollout of three steps:", rollout)
 print("Shape of the rollout TensorDict:", rollout.batch_size)
 
-## Policy
+# Policy
 share_parameters_policy = False
 
 policy_net = torch.nn.Sequential(
@@ -140,7 +141,7 @@ policy = ProbabilisticActor(
 )  # we'll need the log-prob for the PPO loss
 
 
-## Critic network
+# Critic network
 share_parameters_critic = True
 mappo = False  # IPPO if False
 
@@ -165,7 +166,7 @@ critic = TensorDictModule(
 print("Running policy:", policy(env.reset()))
 print("Running value:", critic(env.reset()))
 
-## Data collector
+# Data collector
 collector = SyncDataCollector(
     env,
     policy,
@@ -182,7 +183,7 @@ replay_buffer = ReplayBuffer(
     batch_size=minibatch_size,  # We will sample minibatches of this size
 )
 
-## Loss function
+# Loss function
 loss_module = ClipPPOLoss(
     actor_network=policy,
     critic_network=critic,
@@ -207,7 +208,7 @@ GAE = loss_module.value_estimator
 
 optim = torch.optim.Adam(loss_module.parameters(), lr)
 
-## Training looop
+# Training looop
 pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 
 episode_reward_mean_list = []
@@ -273,12 +274,12 @@ plt.ylabel("Reward")
 plt.title("Episode reward mean")
 plt.show()
 
-## Render
+# Render
 with torch.no_grad():
-   env.rollout(
-       max_steps=max_steps,
-       policy=policy,
-       callback=lambda env, _: env.render(),
-       auto_cast_to_device=True,
-       break_when_any_done=False,
-   )
+    env.rollout(
+        max_steps=max_steps,
+        policy=policy,
+        callback=lambda env, _: env.render(),
+        auto_cast_to_device=True,
+        break_when_any_done=False,
+    )
