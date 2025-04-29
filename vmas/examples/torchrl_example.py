@@ -275,10 +275,12 @@ for tensordict_data in collector:
     pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=True)
     pbar.update()
 
-plt.plot(episode_reward_mean_list)
-plt.xlabel("Training iterations")
-plt.ylabel("Reward")
-plt.title("Episode reward mean")
+    plt.plot(episode_reward_mean_list)
+    plt.xlabel("Training iterations")
+    plt.ylabel("Reward")
+    plt.title("Episode reward mean")
+    plt.savefig(f"pics/{scenario_name}_reward.png")
+
 plt.show()
 
 # Render
