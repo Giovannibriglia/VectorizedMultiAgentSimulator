@@ -27,7 +27,7 @@ from vmas.simulator.utils import Color, ScenarioUtils, X, Y
 
 class Scenario(BaseScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
-        self.n_agents = kwargs.pop("n_agents", 3)
+        self.n_agents = kwargs.pop("n_agents", 1)
         self.shared_rew = kwargs.pop("shared_rew", True)
 
         self.comms_range = kwargs.pop("comms_range", 0.0)
@@ -775,6 +775,8 @@ class VoronoiCoverage:
             else self.xy_grid
         )
 
+        # self.matrices = torch.
+
     """def mirror(self, points, xmin, xmax, ymin, ymax):
         square_corners = torch.tensor(
             [(xmin, ymin), (xmax, ymin), (xmax, ymax), (xmin, ymax)],
@@ -997,16 +999,16 @@ class VoronoiCoverage:
         # print("int and int: ", in_and_int.reshape((self.nxcells, self.nycells)))
         # in_and_ext = np.logical_and(bool_val, np.logical_not(pdf_int))
         weights_in = pdf[in_and_int]
-        weights_ext = pdf[np.logical_not(pdf_int)]
+        # weights_ext = pdf[np.logical_not(pdf_int)]
         reward = (
             torch.sum(
                 weights_in
                 * torch.linalg.norm(pdf_grid[in_and_int] - robot, axis=1) ** 2
+                * self.grid_spacing**2
             )
-            * self.grid_spacing**2
-            + (0.5 * self.cells_range * self.grid_spacing) ** 2
-            * torch.sum(weights_ext)
-            * self.grid_spacing**2
+            # + (0.5 * self.cells_range * self.grid_spacing) ** 2
+            # * torch.sum(weights_ext)
+            # * self.grid_spacing**2
         )
         return reward
 

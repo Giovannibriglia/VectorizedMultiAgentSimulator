@@ -20,7 +20,7 @@ from ray.tune.integration.wandb import WandbLoggerCallback
 from vmas import make_env
 from vmas.simulator.environment import Wrapper
 
-scenario_name = "balance"
+scenario_name = "voronoi"
 
 # Scenario specific variables.
 # When modifying this also modify env_config and env_creator
@@ -31,7 +31,7 @@ continuous_actions = True
 max_steps = 200
 num_vectorized_envs = 96
 num_workers = 5
-vmas_device = "cpu"  # or cuda
+vmas_device = "cuda"  # or cuda
 
 
 def env_creator(config: Dict):
