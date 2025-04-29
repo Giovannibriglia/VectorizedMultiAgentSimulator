@@ -22,6 +22,10 @@ from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 
 # Loss
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
+from torchrl.record import VideoRecorder
+
+# Recording
+from torchrl.record.loggers.csv import CSVLogger
 
 # Utils
 torch.manual_seed(0)
@@ -41,7 +45,7 @@ vmas_device = device  # The device where the simulator is run (VMAS can run on G
 
 # Sampling
 frames_per_batch = 6_000  # Number of team frames collected per training iteration
-n_iters = 5  # Number of sampling and training iterations
+n_iters = 50  # Number of sampling and training iterations
 total_frames = frames_per_batch * n_iters
 
 # Training
@@ -80,6 +84,8 @@ env = VmasEnv(
     n_gaussians=n_gaussians,
 )
 
+logger = CSVLogger(exp_name="voronoi_1_1", log_dir="videos", video_format="mp4")
+
 print("action_spec:", env.full_action_spec)
 print("reward_spec:", env.full_reward_spec)
 print("done_spec:", env.full_done_spec)
@@ -91,6 +97,7 @@ print("done_keys:", env.done_keys)
 env = TransformedEnv(
     env,
     RewardSum(in_keys=[env.reward_key], out_keys=[("agents", "episode_reward")]),
+    VideoRecorder(logger=logger, tag="rollout_video"),
 )
 check_env_specs(env)
 
@@ -265,7 +272,7 @@ for tensordict_data in collector:
         tensordict_data.get(("next", "agents", "episode_reward"))[done].mean().item()
     )
     episode_reward_mean_list.append(episode_reward_mean)
-    pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
+    pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=True)
     pbar.update()
 
 plt.plot(episode_reward_mean_list)
@@ -275,11 +282,26 @@ plt.title("Episode reward mean")
 plt.show()
 
 # Render
+from PIL import Image
+
+
+def rendering_callback(env, td):
+    env.frames.append(Image.fromarray(env.render(mode="rgb_array")))
+
+
 with torch.no_grad():
     env.rollout(
         max_steps=max_steps,
         policy=policy,
-        callback=lambda env, _: env.render(),
+        # callback=lambda env, _: env.render(),
+        callback=rendering_callback,
         auto_cast_to_device=True,
         break_when_any_done=False,
     )
+env.frames[0].save(
+    f"{scenario_name}.gif",
+    save_all=True,
+    append_images=env.frames[1:],
+    duration=3,
+    loop=0,
+)
