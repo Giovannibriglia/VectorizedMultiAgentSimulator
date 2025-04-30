@@ -1,5 +1,10 @@
 # Torch
+import cv2
 import torch
+
+# Utils
+# torch.manual_seed(0)
+from matplotlib import pyplot as plt
 
 # Tensordict modules
 from tensordict.nn import set_composite_lp_aggregate, TensorDictModule
@@ -22,14 +27,11 @@ from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
 
 # Loss
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
-from torchrl.record import VideoRecorder
+
+# from torchrl.record import VideoRecorder
 
 # Recording
 from torchrl.record.loggers.csv import CSVLogger
-
-# Utils
-torch.manual_seed(0)
-from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 print("Imports OK.")
@@ -45,7 +47,7 @@ vmas_device = device  # The device where the simulator is run (VMAS can run on G
 
 # Sampling
 frames_per_batch = 6_000  # Number of team frames collected per training iteration
-n_iters = 50  # Number of sampling and training iterations
+n_iters = 100  # Number of sampling and training iterations
 total_frames = frames_per_batch * n_iters
 
 # Training
@@ -65,12 +67,12 @@ set_composite_lp_aggregate(False).set()
 print("Device: ", device)
 
 # Environment
-max_steps = 100  # Episode steps before done
+max_steps = 500  # Episode steps before done
 num_vmas_envs = (
     frames_per_batch // max_steps
 )  # Number of vectorized envs. frames_per_batch should be divisible by this number
 scenario_name = "voronoi"
-n_agents = 3
+n_agents = 1
 n_gaussians = 1
 
 env = VmasEnv(
@@ -97,14 +99,21 @@ print("done_keys:", env.done_keys)
 env = TransformedEnv(
     env,
     RewardSum(in_keys=[env.reward_key], out_keys=[("agents", "episode_reward")]),
-    VideoRecorder(logger=logger, tag="rollout_video"),
+    # VideoRecorder(logger=logger, tag="rollout_video"),
 )
 check_env_specs(env)
+
+# Render
+frames = []
+
+
+def rendering_callback(env, td):
+    frames.append(env.render(mode="rgb_array"))
 
 
 # Rollout
 n_rollout_steps = 5
-rollout = env.rollout(n_rollout_steps)
+rollout = env.rollout(max_steps=n_rollout_steps)
 print("rollout of three steps:", rollout)
 print("Shape of the rollout TensorDict:", rollout.batch_size)
 
@@ -170,8 +179,8 @@ critic = TensorDictModule(
     out_keys=[("agents", "state_value")],
 )
 
-print("Running policy:", policy(env.reset()))
-print("Running value:", critic(env.reset()))
+# print("Running policy:", policy(env.reset()))
+# print("Running value:", critic(env.reset()))
 
 # Data collector
 collector = SyncDataCollector(
@@ -272,7 +281,7 @@ for tensordict_data in collector:
         tensordict_data.get(("next", "agents", "episode_reward"))[done].mean().item()
     )
     episode_reward_mean_list.append(episode_reward_mean)
-    pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=True)
+    pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
     pbar.update()
 
     plt.plot(episode_reward_mean_list)
@@ -282,13 +291,6 @@ for tensordict_data in collector:
     plt.savefig(f"pics/{scenario_name}_reward.png")
 
 plt.show()
-
-# Render
-from PIL import Image
-
-
-def rendering_callback(env, td):
-    env.frames.append(Image.fromarray(env.render(mode="rgb_array")))
 
 
 with torch.no_grad():
@@ -300,10 +302,19 @@ with torch.no_grad():
         auto_cast_to_device=True,
         break_when_any_done=False,
     )
-env.frames[0].save(
-    f"{scenario_name}.gif",
-    save_all=True,
-    append_images=env.frames[1:],
-    duration=3,
-    loop=0,
-)
+
+# Set video properties
+height, width, layers = frames[0].shape
+fps = 30  # frames per second
+output_path = "videos/voronoi.mp4"
+
+# Define the codec and create VideoWriter object
+fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # or 'XVID' for .avi files
+out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+# Write each frame to the video
+for frame in frames:
+    out.write(frame)
+
+# Release the writer
+out.release()
