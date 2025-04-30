@@ -72,7 +72,7 @@ num_vmas_envs = (
     frames_per_batch // max_steps
 )  # Number of vectorized envs. frames_per_batch should be divisible by this number
 scenario_name = "voronoi"
-n_agents = 1
+n_agents = 3
 n_gaussians = 1
 
 env = VmasEnv(
@@ -103,11 +103,9 @@ env = TransformedEnv(
 )
 check_env_specs(env)
 
+
 # Render
-frames = []
-
-
-def rendering_callback(env, td):
+def rendering_callback(env, td, frames):
     frames.append(env.render(mode="rgb_array"))
 
 
@@ -228,6 +226,7 @@ optim = torch.optim.Adam(loss_module.parameters(), lr)
 pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
 
 episode_reward_mean_list = []
+it = 0
 for tensordict_data in collector:
     tensordict_data.set(
         ("next", "agents", "done"),
@@ -289,6 +288,38 @@ for tensordict_data in collector:
     plt.ylabel("Reward")
     plt.title("Episode reward mean")
     plt.savefig(f"pics/{scenario_name}_reward.png")
+
+    if it % 50 == 0:
+        frames = []
+        with torch.no_grad():
+            env.rollout(
+                max_steps=max_steps,
+                policy=policy,
+                # callback=lambda env, _: env.render(),
+                # callback=rendering_callback,
+                callback=lambda env, td: rendering_callback(env, td, frames),
+                auto_cast_to_device=True,
+                break_when_any_done=False,
+            )
+
+        # Set video properties
+        height, width, layers = frames[0].shape
+        fps = 30  # frames per second
+        output_path = f"videos/voronoi_{it}.mp4"
+
+        # Define the codec and create VideoWriter object
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # or 'XVID' for .avi files
+        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
+
+        # Write each frame to the video
+        for frame in frames:
+            out.write(frame)
+
+        # Release the writer
+        out.release()
+
+    it += 1
+
 
 plt.show()
 
