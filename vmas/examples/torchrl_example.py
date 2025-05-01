@@ -1,142 +1,125 @@
-# Torch
-import cv2
+#!/usr/bin/env python
+"""
+VMAS Voronoi PPO trainer (TorchRL ≥ 0.5)
+========================================
+ * Creates an *experiment folder* named  `{EXP_NAME}_YYYYMMDD_HHMMSS`.
+ * Inside it you’ll find three sub‑dirs:
+     ├── policies/   – `policy_iter_*.pt`, `policy_final.pt`
+     ├── videos/     – `voronoi_iter_*.mp4`, `voronoi_final.mp4`
+     └── scalars/    – CSV files with per‑agent reward statistics
+ * No figures are generated – everything is stored as CSV/MP4.
+"""
+
+from __future__ import annotations
+
+import csv
+from datetime import datetime
+from pathlib import Path
+from typing import List
+
+import cv2  # required for mp4 encoding
 import torch
 
-# Utils
-# torch.manual_seed(0)
-from matplotlib import pyplot as plt
-
-# Tensordict modules
+# TorchRL / VMAS imports
 from tensordict.nn import set_composite_lp_aggregate, TensorDictModule
 from tensordict.nn.distributions import NormalParamExtractor
 from torch import multiprocessing
-
-# Data collection
 from torchrl.collectors import SyncDataCollector
 from torchrl.data.replay_buffers import ReplayBuffer
 from torchrl.data.replay_buffers.samplers import SamplerWithoutReplacement
 from torchrl.data.replay_buffers.storages import LazyTensorStorage
-
-# Env
 from torchrl.envs import RewardSum, TransformedEnv
 from torchrl.envs.libs.vmas import VmasEnv
 from torchrl.envs.utils import check_env_specs
-
-# Multi-agent network
 from torchrl.modules import MultiAgentMLP, ProbabilisticActor, TanhNormal
-
-# Loss
 from torchrl.objectives import ClipPPOLoss, ValueEstimators
-
-# from torchrl.record import VideoRecorder
-
-# Recording
-from torchrl.record.loggers.csv import CSVLogger
 from tqdm import tqdm
 
-print("Imports OK.")
+# ────────────────────────────────────────────────────────────────────────────
+# Hyper‑parameters
+# ────────────────────────────────────────────────────────────────────────────
 
-# Devices
-is_fork = multiprocessing.get_start_method() == "fork"
-device = (
-    torch.device(0)
-    if torch.cuda.is_available() and not is_fork
-    else torch.device("cpu")
+EXP_NAME = "voronoi_ppo"
+
+# devices
+IS_FORK = multiprocessing.get_start_method() == "fork"
+DEVICE = torch.device("cuda:0" if torch.cuda.is_available() and not IS_FORK else "cpu")
+VMAS_DEVICE = DEVICE
+
+# sampling / training
+FRAMES_PER_BATCH = 6_000
+N_ITERS = 100
+NUM_EPOCHS = 30
+MINIBATCH_SIZE = 400
+LR = 3e-4
+MAX_GRAD_NORM = 1.0
+CLIP_EPSILON = 0.2
+GAMMA = 0.99
+LAMBDA = 0.9
+ENTROPY_EPS = 1e-4
+N_CHECKPOINTS = 20  # number of videos / checkpoints you want
+LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
+
+# environment
+MAX_STEPS = 500
+SCENARIO_NAME = "voronoi"
+N_AGENTS = 3
+N_GAUSSIANS = 1
+
+# ────────────────────────────────────────────────────────────────────────────
+# Experiment folder layout
+# ────────────────────────────────────────────────────────────────────────────
+
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+ROOT_DIR = Path.cwd() / f"{EXP_NAME}_{TIMESTAMP}"
+POLICY_DIR = ROOT_DIR / "policies"
+VIDEO_DIR = ROOT_DIR / "videos"
+SCALAR_DIR = ROOT_DIR / "scalars"
+for d in (POLICY_DIR, VIDEO_DIR, SCALAR_DIR):
+    d.mkdir(parents=True, exist_ok=True)
+
+print("Experiment root:", ROOT_DIR)
+
+# ────────────────────────────────────────────────────────────────────────────
+# Build env & networks
+# ────────────────────────────────────────────────────────────────────────────
+
+set_composite_lp_aggregate(False)
+
+NUM_VMAS_ENVS = FRAMES_PER_BATCH // MAX_STEPS
+raw_env = VmasEnv(
+    scenario=SCENARIO_NAME,
+    num_envs=NUM_VMAS_ENVS,
+    continuous_actions=True,
+    max_steps=MAX_STEPS,
+    device=VMAS_DEVICE,
+    n_agents=N_AGENTS,
+    n_gaussians=N_GAUSSIANS,
 )
-vmas_device = device  # The device where the simulator is run (VMAS can run on GPU)
-
-# Sampling
-frames_per_batch = 6_000  # Number of team frames collected per training iteration
-n_iters = 100  # Number of sampling and training iterations
-total_frames = frames_per_batch * n_iters
-
-# Training
-num_epochs = 30  # Number of optimization steps per training iteration
-minibatch_size = 400  # Size of the mini-batches in each optimization step
-lr = 3e-4  # Learning rate
-max_grad_norm = 1.0  # Maximum norm for the gradients
-
-# PPO
-clip_epsilon = 0.2  # clip value for PPO loss
-gamma = 0.99  # discount factor
-lmbda = 0.9  # lambda for generalised advantage estimation
-entropy_eps = 1e-4  # coefficient of the entropy term in the PPO loss
-
-# disable log-prob aggregation
-set_composite_lp_aggregate(False).set()
-print("Device: ", device)
-
-# Environment
-max_steps = 500  # Episode steps before done
-num_vmas_envs = (
-    frames_per_batch // max_steps
-)  # Number of vectorized envs. frames_per_batch should be divisible by this number
-scenario_name = "voronoi"
-n_agents = 3
-n_gaussians = 1
-
-env = VmasEnv(
-    scenario=scenario_name,
-    num_envs=num_vmas_envs,
-    continuous_actions=True,  # VMAS supports both continuous and discrete actions
-    max_steps=max_steps,
-    device=vmas_device,
-    # Scenario kwargs
-    n_agents=n_agents,  # These are custom kwargs that change for each VMAS scenario, see the VMAS repo to know more.
-    n_gaussians=n_gaussians,
-)
-
-logger = CSVLogger(exp_name="voronoi_1_1", log_dir="videos", video_format="mp4")
-
-print("action_spec:", env.full_action_spec)
-print("reward_spec:", env.full_reward_spec)
-print("done_spec:", env.full_done_spec)
-print("observation_spec:", env.observation_spec)
-print("action_keys:", env.action_keys)
-print("reward_keys:", env.reward_keys)
-print("done_keys:", env.done_keys)
 
 env = TransformedEnv(
-    env,
-    RewardSum(in_keys=[env.reward_key], out_keys=[("agents", "episode_reward")]),
-    # VideoRecorder(logger=logger, tag="rollout_video"),
+    raw_env,
+    RewardSum(in_keys=[raw_env.reward_key], out_keys=[("agents", "episode_reward")]),
 )
 check_env_specs(env)
 
+obs_dim = env.observation_spec["agents", "observation"].shape[-1]
+action_dim = env.action_spec.shape[-1]
 
-# Render
-def rendering_callback(env, td, frames):
-    frames.append(env.render(mode="rgb_array"))
-
-
-# Rollout
-n_rollout_steps = 5
-rollout = env.rollout(max_steps=n_rollout_steps)
-print("rollout of three steps:", rollout)
-print("Shape of the rollout TensorDict:", rollout.batch_size)
-
-# Policy
-share_parameters_policy = False
-
-policy_net = torch.nn.Sequential(
-    MultiAgentMLP(
-        n_agent_inputs=env.observation_spec["agents", "observation"].shape[
-            -1
-        ],  # n_obs_per_agent
-        n_agent_outputs=2 * env.action_spec.shape[-1],  # 2 * n_actions_per_agents
-        n_agents=env.n_agents,
-        centralised=False,  # the policies are decentralised (ie each agent will act from its observation)
-        share_params=share_parameters_policy,
-        device=device,
-        depth=2,
-        num_cells=256,
-        activation_class=torch.nn.Tanh,
-    ),
-    NormalParamExtractor(),  # this will just separate the last dimension into two outputs: a loc and a non-negative scale
+policy_backbone = MultiAgentMLP(
+    n_agent_inputs=obs_dim,
+    n_agent_outputs=2 * action_dim,
+    n_agents=N_AGENTS,
+    centralised=False,
+    share_params=False,
+    device=DEVICE,
+    depth=2,
+    num_cells=256,
+    activation_class=torch.nn.Tanh,
 )
 
 policy_module = TensorDictModule(
-    policy_net,
+    torch.nn.Sequential(policy_backbone, NormalParamExtractor()),
     in_keys=[("agents", "observation")],
     out_keys=[("agents", "loc"), ("agents", "scale")],
 )
@@ -152,200 +135,205 @@ policy = ProbabilisticActor(
         "high": env.full_action_spec_unbatched[env.action_key].space.high,
     },
     return_log_prob=True,
-)  # we'll need the log-prob for the PPO loss
+)
 
-
-# Critic network
-share_parameters_critic = True
-mappo = False  # IPPO if False
-
-critic_net = MultiAgentMLP(
-    n_agent_inputs=env.observation_spec["agents", "observation"].shape[-1],
-    n_agent_outputs=1,  # 1 value per agent
-    n_agents=env.n_agents,
-    centralised=mappo,
-    share_params=share_parameters_critic,
-    device=device,
+critic_backbone = MultiAgentMLP(
+    n_agent_inputs=obs_dim,
+    n_agent_outputs=1,
+    n_agents=N_AGENTS,
+    centralised=False,
+    share_params=True,
+    device=DEVICE,
     depth=2,
     num_cells=256,
     activation_class=torch.nn.Tanh,
 )
 
 critic = TensorDictModule(
-    module=critic_net,
+    critic_backbone,
     in_keys=[("agents", "observation")],
     out_keys=[("agents", "state_value")],
 )
 
-# print("Running policy:", policy(env.reset()))
-# print("Running value:", critic(env.reset()))
+# ────────────────────────────────────────────────────────────────────────────
+# Collector, buffer, loss
+# ────────────────────────────────────────────────────────────────────────────
 
-# Data collector
 collector = SyncDataCollector(
     env,
     policy,
-    device=vmas_device,
-    storing_device=device,
-    frames_per_batch=frames_per_batch,
-    total_frames=total_frames,
-)
-replay_buffer = ReplayBuffer(
-    storage=LazyTensorStorage(
-        frames_per_batch, device=device
-    ),  # We store the frames_per_batch collected at each iteration
-    sampler=SamplerWithoutReplacement(),
-    batch_size=minibatch_size,  # We will sample minibatches of this size
+    frames_per_batch=FRAMES_PER_BATCH,
+    total_frames=FRAMES_PER_BATCH * N_ITERS,
+    device=VMAS_DEVICE,
+    storing_device=DEVICE,
 )
 
-# Loss function
+replay_buffer = ReplayBuffer(
+    storage=LazyTensorStorage(FRAMES_PER_BATCH, device=DEVICE),
+    sampler=SamplerWithoutReplacement(),
+    batch_size=MINIBATCH_SIZE,
+)
+
 loss_module = ClipPPOLoss(
     actor_network=policy,
     critic_network=critic,
-    clip_epsilon=clip_epsilon,
-    entropy_coef=entropy_eps,
-    normalize_advantage=False,  # Important to avoid normalizing across the agent dimension
+    clip_epsilon=CLIP_EPSILON,
+    entropy_coef=ENTROPY_EPS,
+    normalize_advantage=False,
 )
-loss_module.set_keys(  # We have to tell the loss where to find the keys
+loss_module.set_keys(
     reward=env.reward_key,
     action=env.action_key,
     value=("agents", "state_value"),
-    # These last 2 keys will be expanded to match the reward shape
     done=("agents", "done"),
     terminated=("agents", "terminated"),
 )
-
-
-loss_module.make_value_estimator(
-    ValueEstimators.GAE, gamma=gamma, lmbda=lmbda
-)  # We build GAE
+loss_module.make_value_estimator(ValueEstimators.GAE, gamma=GAMMA, lmbda=LAMBDA)
 GAE = loss_module.value_estimator
+optimizer = torch.optim.Adam(loss_module.parameters(), LR)
 
-optim = torch.optim.Adam(loss_module.parameters(), lr)
+# ────────────────────────────────────────────────────────────────────────────
+# CSV helpers
+# ────────────────────────────────────────────────────────────────────────────
 
-# Training looop
-pbar = tqdm(total=n_iters, desc="episode_reward_mean = 0")
+train_csv_path = SCALAR_DIR / "training_mean_reward.csv"
+with train_csv_path.open("w", newline="") as f:
+    writer = csv.writer(f)
+    header = ["iteration"] + [f"agent{i}" for i in range(N_AGENTS)] + ["team_mean"]
+    writer.writerow(header)
 
-episode_reward_mean_list = []
-it = 0
-for tensordict_data in collector:
-    tensordict_data.set(
-        ("next", "agents", "done"),
-        tensordict_data.get(("next", "done"))
-        .unsqueeze(-1)
-        .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
-    )
-    tensordict_data.set(
-        ("next", "agents", "terminated"),
-        tensordict_data.get(("next", "terminated"))
-        .unsqueeze(-1)
-        .expand(tensordict_data.get_item_shape(("next", env.reward_key))),
-    )
-    # We need to expand the done and terminated to match the reward shape (this is expected by the value estimator)
+# evaluation CSV written inside evaluate_and_record()
+
+# ────────────────────────────────────────────────────────────────────────────
+# Video helper
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def save_video(frames: List[torch.Tensor], filename: Path, fps: int = 30):
+    if not frames:
+        print("[warning] no frames to write", filename)
+        return
+    h, w, _ = frames[0].shape
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    vout = cv2.VideoWriter(str(filename), fourcc, fps, (w, h))
+    for fr in frames:
+        vout.write(fr)
+    vout.release()
+
+
+def evaluate_and_record(policy, iteration: int):
+    """Run a rollout, save per‑step rewards CSV and an MP4 video."""
+    frames: List[torch.Tensor] = []
+    with torch.no_grad():
+        td = env.rollout(
+            max_steps=MAX_STEPS,
+            policy=policy,
+            callback=lambda e, td: frames.append(e.render(mode="rgb_array")),
+            break_when_any_done=False,
+            auto_cast_to_device=True,
+        )
+
+    # video
+    video_file = VIDEO_DIR / f"{SCENARIO_NAME}_iter_{iteration}.mp4"
+    save_video(frames, video_file)
+
+    # --- reward extraction (robust across TorchRL versions) -----------------
+    rewards = td.get(env.reward_key, None)  # try direct key (agents,reward)
+    if rewards is None:
+        # older rollout returns rewards under "next"
+        rewards = td.get(("next",) + env.reward_key, None)
+    if rewards is None:
+        print("[warning] reward not found in rollout – skipping CSV")
+        return 0.0
+
+    # rewards shape: [T, E, A] or [T+1, E, A] (extra step) – unify length
+    if rewards.shape[0] > MAX_STEPS:
+        rewards = rewards[:-1]
+
+    # mean across envs to keep file compact
+    step_rewards = rewards.mean(dim=1).cpu().numpy()  # [T, A]
+    team_step = step_rewards.mean(axis=1)
+
+    csv_path = SCALAR_DIR / f"eval_iter_{iteration}_reward_per_step.csv"
+    with csv_path.open("w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["step"] + [f"agent{i}" for i in range(N_AGENTS)] + ["team"])
+        for t, row in enumerate(step_rewards):
+            writer.writerow([t, *row.tolist(), team_step[t]])
+
+    return team_step.mean()
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# Training loop
+# ────────────────────────────────────────────────────────────────────────────
+
+pbar = tqdm(total=N_ITERS, desc="first iteration...")
+checkpoint_set = set(range(0, N_ITERS, LOG_EVERY))
+
+for it, data in enumerate(collector):
+    # expand done / terminated to agent dim
+    for key in ("done", "terminated"):
+        data.set(
+            ("next", "agents", key),
+            data.get(("next", key))
+            .unsqueeze(-1)
+            .expand(data.get_item_shape(("next", env.reward_key))),
+        )
 
     with torch.no_grad():
         GAE(
-            tensordict_data,
+            data,
             params=loss_module.critic_network_params,
             target_params=loss_module.target_critic_network_params,
-        )  # Compute GAE and add it to the data
+        )
 
-    data_view = tensordict_data.reshape(-1)  # Flatten the batch size to shuffle data
-    replay_buffer.extend(data_view)
+    # push to replay buffer
+    replay_buffer.extend(data.reshape(-1))
 
-    for _ in range(num_epochs):
-        for _ in range(frames_per_batch // minibatch_size):
-            subdata = replay_buffer.sample()
-            loss_vals = loss_module(subdata)
-
-            loss_value = (
-                loss_vals["loss_objective"]
-                + loss_vals["loss_critic"]
-                + loss_vals["loss_entropy"]
-            )
-
-            loss_value.backward()
-
-            torch.nn.utils.clip_grad_norm_(
-                loss_module.parameters(), max_grad_norm
-            )  # Optional
-
-            optim.step()
-            optim.zero_grad()
+    # gradient updates
+    for _ in range(NUM_EPOCHS):
+        for _ in range(FRAMES_PER_BATCH // MINIBATCH_SIZE):
+            batch = replay_buffer.sample()
+            losses = loss_module(batch)
+            loss = sum(losses.values())
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(loss_module.parameters(), MAX_GRAD_NORM)
+            optimizer.step()
+            optimizer.zero_grad()
 
     collector.update_policy_weights_()
 
-    # Logging
-    done = tensordict_data.get(("next", "agents", "done"))
-    episode_reward_mean = (
-        tensordict_data.get(("next", "agents", "episode_reward"))[done].mean().item()
+    # training rewards (only finished episodes)
+    ep_rew = data.get(("next", "agents", "episode_reward"))  # [envs, agents]
+    done_mask = data.get(("next", "agents", "done"))
+    agent_means = (
+        ep_rew[done_mask].view(-1, N_AGENTS).mean(dim=0)
+        if done_mask.any()
+        else torch.zeros(N_AGENTS)
     )
-    episode_reward_mean_list.append(episode_reward_mean)
-    pbar.set_description(f"episode_reward_mean = {episode_reward_mean}", refresh=False)
+    team_mean = agent_means.mean().item()
+
+    # append to training CSV
+    with train_csv_path.open("a", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow([it, *agent_means.tolist(), team_mean])
+
+    # checkpoint?
+    if it in checkpoint_set or it == N_ITERS - 1:
+        pbar.set_description(f"evaluation... - train‑team‑mean = {team_mean:.3f}")
+        # save policy
+        policy_file = POLICY_DIR / f"policy_iter_{it}.pt"
+        torch.save(policy.state_dict(), policy_file)
+        # evaluation rollout + video + csv
+        eval_mean = evaluate_and_record(policy, it)
+        pbar.set_description(f"eval‑team‑mean = {eval_mean:.3f}")
+    else:
+        pbar.set_description(f"train‑team‑mean = {team_mean:.3f}")
+
     pbar.update()
 
-    plt.plot(episode_reward_mean_list)
-    plt.xlabel("Training iterations")
-    plt.ylabel("Reward")
-    plt.title("Episode reward mean")
-    plt.savefig(f"pics/{scenario_name}_reward.png")
-
-    if it % 50 == 0:
-        frames = []
-        with torch.no_grad():
-            env.rollout(
-                max_steps=max_steps,
-                policy=policy,
-                # callback=lambda env, _: env.render(),
-                # callback=rendering_callback,
-                callback=lambda env, td: rendering_callback(env, td, frames),
-                auto_cast_to_device=True,
-                break_when_any_done=False,
-            )
-
-        # Set video properties
-        height, width, layers = frames[0].shape
-        fps = 30  # frames per second
-        output_path = f"videos/voronoi_{it}.mp4"
-
-        # Define the codec and create VideoWriter object
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # or 'XVID' for .avi files
-        out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-        # Write each frame to the video
-        for frame in frames:
-            out.write(frame)
-
-        # Release the writer
-        out.release()
-
-    it += 1
-
-
-plt.show()
-
-
-with torch.no_grad():
-    env.rollout(
-        max_steps=max_steps,
-        policy=policy,
-        # callback=lambda env, _: env.render(),
-        callback=rendering_callback,
-        auto_cast_to_device=True,
-        break_when_any_done=False,
-    )
-
-# Set video properties
-height, width, layers = frames[0].shape
-fps = 30  # frames per second
-output_path = "videos/voronoi.mp4"
-
-# Define the codec and create VideoWriter object
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")  # or 'XVID' for .avi files
-out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
-
-# Write each frame to the video
-for frame in frames:
-    out.write(frame)
-
-# Release the writer
-out.release()
+# final artefacts
+torch.save(policy.state_dict(), POLICY_DIR / "policy_final.pt")
+evaluate_and_record(policy, N_ITERS)
+print("Training finished. Data saved to", ROOT_DIR)
