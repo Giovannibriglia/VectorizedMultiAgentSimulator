@@ -48,8 +48,8 @@ VMAS_DEVICE = DEVICE
 
 # sampling / training
 FRAMES_PER_BATCH = 6_000
-N_ITERS = 100
-NUM_EPOCHS = 30
+N_ITERS = 500
+NUM_EPOCHS = 50
 MINIBATCH_SIZE = 400
 LR = 3e-4
 MAX_GRAD_NORM = 1.0
@@ -57,7 +57,7 @@ CLIP_EPSILON = 0.2
 GAMMA = 0.99
 LAMBDA = 0.9
 ENTROPY_EPS = 1e-4
-N_CHECKPOINTS = 20  # number of videos / checkpoints you want
+N_CHECKPOINTS = 50  # number of videos / checkpoints you want
 LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
 
 # environment
@@ -65,6 +65,7 @@ MAX_STEPS = 500
 SCENARIO_NAME = "voronoi"
 N_AGENTS = 3
 N_GAUSSIANS = 1
+SEED = 0
 
 # ────────────────────────────────────────────────────────────────────────────
 # Experiment folder layout
@@ -95,6 +96,8 @@ raw_env = VmasEnv(
     device=VMAS_DEVICE,
     n_agents=N_AGENTS,
     n_gaussians=N_GAUSSIANS,
+    seed=SEED,
+    n_rays=50,
 )
 
 env = TransformedEnv(
