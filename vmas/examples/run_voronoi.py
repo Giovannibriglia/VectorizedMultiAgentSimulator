@@ -52,8 +52,10 @@ def run_heuristic(
         # Environment specific variables
         **env_kwargs,
     )
-
-    policy = heuristic(env=env, continuous_action=True)
+    if heuristic == VoronoiPolicy:
+        policy = heuristic(env=env, continuous_action=True)
+    else:
+        policy = heuristic(continuous_action=True)
 
     frame_list = []  # For creating a gif
     init_time = time.time()
@@ -78,7 +80,7 @@ def run_heuristic(
             # print(f"{i}", actions[i])
         # print("t action: ", time.time()-t_act)
         obs, rews, dones, info = env.step(actions)
-        print(rews)
+        # print(rews)
         rewards = torch.stack(rews, dim=1)
         global_reward = rewards.mean(dim=1)
         sum_reward = torch.sum(rewards)
@@ -126,14 +128,16 @@ if __name__ == "__main__":
     run_heuristic(
         scenario_name="voronoi",
         heuristic=VoronoiPolicy,
-        n_envs=1,
-        n_steps=200,
+        n_envs=32,
+        n_steps=50,
         render=True,
         save_render=True,
         centralized=False,  # mdp or pomdp in terms of pdf; but robots are seen only if within the agent's lidar range. #TODO; error in compute coverage function
         shared_rew=False,
         n_gaussians=1,
         grid_spacing=0.1,
+        lidar_range=1.0,
+        n_agents=3,
     )
 
 # ok: [True, True], [

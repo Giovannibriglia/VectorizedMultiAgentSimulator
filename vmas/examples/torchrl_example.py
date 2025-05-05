@@ -98,6 +98,7 @@ raw_env = VmasEnv(
     n_gaussians=N_GAUSSIANS,
     seed=SEED,
     n_rays=50,
+    centralized=False,
 )
 
 env = TransformedEnv(
