@@ -36,6 +36,7 @@ def run_heuristic(
     render: bool = False,
     save_render: bool = False,
     device: str = mydev,
+    seed: int = 42,
     **env_kwargs,
 ):
     assert not (save_render and not render), "To save the video you have to render it"
@@ -49,6 +50,7 @@ def run_heuristic(
         device=device,
         continuous_actions=True,
         wrapper=None,
+        seed=seed,
         # Environment specific variables
         **env_kwargs,
     )
@@ -128,16 +130,18 @@ if __name__ == "__main__":
     run_heuristic(
         scenario_name="voronoi",
         heuristic=VoronoiPolicy,
-        n_envs=32,
-        n_steps=50,
+        n_envs=1,
+        n_steps=100,
         render=True,
-        save_render=True,
+        save_render=False,
         centralized=False,  # mdp or pomdp in terms of pdf; but robots are seen only if within the agent's lidar range. #TODO; error in compute coverage function
         shared_rew=False,
         n_gaussians=1,
-        grid_spacing=0.1,
-        lidar_range=1.0,
+        n_rays=50,
+        grid_spacing=0.2,
+        lidar_range=0.5,
         n_agents=3,
+        seed=2,
     )
 
 # ok: [True, True], [

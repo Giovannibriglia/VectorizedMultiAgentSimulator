@@ -28,7 +28,7 @@ from vmas.simulator.utils import Color, ScenarioUtils, X, Y
 class Scenario(BaseScenario):
     def make_world(self, batch_dim: int, device: torch.device, **kwargs):
         self.n_agents = kwargs.pop("n_agents", 1)
-        self.shared_rew = kwargs.pop("shared_rew", True)
+        self.shared_rew = kwargs.pop("shared_rew", False)
 
         self.comms_range = kwargs.pop("comms_range", 0.0)
         self.lidar_range = kwargs.pop("lidar_range", 0.2)
@@ -42,6 +42,8 @@ class Scenario(BaseScenario):
         self.collisions = kwargs.pop("collisions", True)
         self.spawn_same_pos = kwargs.pop("spawn_same_pos", False)
         self.norm = kwargs.pop("norm", True)
+
+        self.last_centroid = torch.zeros((batch_dim, self.n_agents, 2), device=device)
 
         self.angle_start = kwargs.pop("angle_start", 0.05)
         self.angle_end = kwargs.pop("angle_end", 2 * torch.pi + 0.05)
@@ -343,7 +345,7 @@ class Scenario(BaseScenario):
             (pos.unsqueeze(1), robots), dim=1
         )  # [n_envs, n_robot_tot, 2]
 
-        if self.shared_rew:
+        """if self.shared_rew:
             is_first = self.world.agents.index(agent) == 0
             rewards = torch.zeros(
                 (self.world.batch_dim, self.n_agents), device=self.world.device
@@ -353,10 +355,10 @@ class Scenario(BaseScenario):
                     robots_j = points[env_idx, :, :]
                     voro = self.voronoi.partitioning_single_env(robots_j)
                     for ag_idx in range(self.n_agents):
-                        rewards[
-                            env_idx, ag_idx
-                        ] = self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
-                            voro, pdf[env_idx], 0, env_idx
+                        rewards[env_idx, ag_idx] = (
+                            self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
+                                voro, pdf[env_idx], 0, env_idx
+                            )
                         )
 
                 self.sampling_rew = rewards.sum(-1)
@@ -365,16 +367,38 @@ class Scenario(BaseScenario):
             for env_idx in range(self.world.batch_dim):
                 robots_j = points[env_idx, :, :]
                 vor = self.voronoi.partitioning_single_env(robots_j)
-                rewards[
-                    env_idx
-                ] = self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
-                    vor, pdf[env_idx], 0, env_idx
+                rewards[env_idx] = (
+                    self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
+                        vor, pdf[env_idx], 0, env_idx
+                    )
                 )
-            """print(
-                f"Agent: {self.world.agents.index(agent)} - \n reward: {rewards} - \n robots_j: {points[0, :, :]} - \n pdf[0]: {pdf[0]}"
-            )"""
+            #print(
+                #f"Agent: {self.world.agents.index(agent)} - \n reward: {rewards} - \n robots_j: {points[0, :, :]} - \n pdf[0]: {pdf[0]}"
+            #)
 
-        return self.sampling_rew if self.shared_rew else rewards
+        return self.sampling_rew if self.shared_rew else rewards"""
+
+        rewards = torch.zeros(self.world.batch_dim, device=self.world.device)
+        for env_idx in range(self.world.batch_dim):
+            robots_j = points[env_idx, :, :]
+
+            rewards[env_idx] = -torch.linalg.norm(
+                self.last_centroid[env_idx, self.world.agents.index(agent)] - pos
+            )
+
+            vor = self.voronoi.partitioning_single_env(robots_j)
+            new_agent_centroid = self.voronoi.computeCentroidSingleEnv(
+                vor, pdf[env_idx]
+            )
+
+            self.last_centroid[
+                env_idx, self.world.agents.index(agent), :
+            ] = new_agent_centroid
+
+        dists = torch.linalg.norm(robots_rel, dim=1)
+        reward_collision = 0.5 * torch.sum(dists < 2 * self.grid_spacing).item()
+
+        return rewards - reward_collision
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
@@ -1000,6 +1024,9 @@ class VoronoiCoverage:
         # print("int and int: ", in_and_int.reshape((self.nxcells, self.nycells)))
         # in_and_ext = np.logical_and(bool_val, np.logical_not(pdf_int))
         weights_in = pdf[in_and_int]
+
+        n_cells_normalization = in_and_int.sum().item()
+
         # weights_ext = pdf[np.logical_not(pdf_int)]
         reward = (
             torch.sum(
@@ -1007,6 +1034,7 @@ class VoronoiCoverage:
                 * torch.linalg.norm(pdf_grid[in_and_int] - robot, axis=1) ** 2
                 * self.grid_spacing**2
             )
+            / n_cells_normalization
             # + (0.5 * self.cells_range * self.grid_spacing) ** 2
             # * torch.sum(weights_ext)
             # * self.grid_spacing**2

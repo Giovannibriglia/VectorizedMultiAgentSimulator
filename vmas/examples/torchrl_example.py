@@ -98,7 +98,10 @@ raw_env = VmasEnv(
     n_gaussians=N_GAUSSIANS,
     seed=SEED,
     n_rays=50,
+    lidar_range=0.5,
+    grid_spacing=0.05,
     centralized=False,
+    shared_rew=False,
 )
 
 env = TransformedEnv(
