@@ -126,21 +126,8 @@ policy_backbone = MultiAgentMLP(
 )
 
 
-class SafeNormalParamExtractor(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.extractor = NormalParamExtractor()
-
-    def forward(self, x):
-        loc, scale = self.extractor(x)
-        scale = torch.clamp(scale, min=1e-3, max=10.0)
-        scale = torch.nan_to_num(scale, nan=1.0, posinf=1.0, neginf=1.0)
-        loc = torch.nan_to_num(loc, nan=0.0, posinf=1.0, neginf=-1.0)
-        return loc, scale
-
-
 policy_module = TensorDictModule(
-    torch.nn.Sequential(policy_backbone, SafeNormalParamExtractor()),
+    torch.nn.Sequential(policy_backbone, NormalParamExtractor()),
     in_keys=[("agents", "observation")],
     out_keys=[("agents", "loc"), ("agents", "scale")],
 )
