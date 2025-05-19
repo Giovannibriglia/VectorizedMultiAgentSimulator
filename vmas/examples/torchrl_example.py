@@ -125,6 +125,7 @@ policy_backbone = MultiAgentMLP(
     activation_class=torch.nn.Tanh,
 )
 
+
 policy_module = TensorDictModule(
     torch.nn.Sequential(policy_backbone, NormalParamExtractor()),
     in_keys=[("agents", "observation")],
