@@ -63,9 +63,9 @@ N_CHECKPOINTS = 20  # number of videos / checkpoints you want
 LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
 
 # environment
-MAX_STEPS = 300
+MAX_STEPS = 50
 SCENARIO_NAME = "voronoi"
-N_AGENTS = 3
+N_AGENTS = 4
 N_GAUSSIANS = 3
 LIDAR_RANGE = 0.6
 
@@ -114,7 +114,7 @@ policy_backbone = MultiAgentMLP(
     n_agent_inputs=obs_dim,
     n_agent_outputs=2 * action_dim,
     n_agents=N_AGENTS,
-    centralised=False,
+    centralized=False,
     share_params=True,
     device=DEVICE,
     depth=2,
@@ -145,7 +145,7 @@ critic_backbone = MultiAgentMLP(
     n_agent_inputs=obs_dim,
     n_agent_outputs=1,
     n_agents=N_AGENTS,
-    centralised=False,
+    centralized=False,
     share_params=True,
     device=DEVICE,
     depth=2,
