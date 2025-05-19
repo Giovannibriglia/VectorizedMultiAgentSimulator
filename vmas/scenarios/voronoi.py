@@ -345,7 +345,7 @@ class Scenario(BaseScenario):
             (pos.unsqueeze(1), robots), dim=1
         )  # [n_envs, n_robot_tot, 2]
 
-        """if self.shared_rew:
+        if self.shared_rew:
             is_first = self.world.agents.index(agent) == 0
             rewards = torch.zeros(
                 (self.world.batch_dim, self.n_agents), device=self.world.device
@@ -355,10 +355,10 @@ class Scenario(BaseScenario):
                     robots_j = points[env_idx, :, :]
                     voro = self.voronoi.partitioning_single_env(robots_j)
                     for ag_idx in range(self.n_agents):
-                        rewards[env_idx, ag_idx] = (
-                            self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
-                                voro, pdf[env_idx], 0, env_idx
-                            )
+                        rewards[
+                            env_idx, ag_idx
+                        ] = self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
+                            voro, pdf[env_idx], 0, env_idx
                         )
 
                 self.sampling_rew = rewards.sum(-1)
@@ -367,17 +367,18 @@ class Scenario(BaseScenario):
             for env_idx in range(self.world.batch_dim):
                 robots_j = points[env_idx, :, :]
                 vor = self.voronoi.partitioning_single_env(robots_j)
-                rewards[env_idx] = (
-                    self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
-                        vor, pdf[env_idx], 0, env_idx
-                    )
+                rewards[
+                    env_idx
+                ] = self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
+                    vor, pdf[env_idx], 0, env_idx
                 )
-            #print(
-                #f"Agent: {self.world.agents.index(agent)} - \n reward: {rewards} - \n robots_j: {points[0, :, :]} - \n pdf[0]: {pdf[0]}"
-            #)
+            # print(
+            # f"Agent: {self.world.agents.index(agent)} - \n reward: {rewards} - \n robots_j: {points[0, :, :]} - \n pdf[0]: {pdf[0]}"
+            # )
 
-        return self.sampling_rew if self.shared_rew else rewards"""
+        return self.sampling_rew if self.shared_rew else rewards
 
+        """
         rewards = torch.zeros(self.world.batch_dim, device=self.world.device)
         for env_idx in range(self.world.batch_dim):
             robots_j = points[env_idx, :, :]
@@ -399,6 +400,7 @@ class Scenario(BaseScenario):
         reward_collision = 0.5 * torch.sum(dists < 2 * self.grid_spacing).item()
 
         return rewards - reward_collision
+        """
 
     def observation(self, agent: Agent) -> Tensor:
         observations = [
@@ -1025,7 +1027,7 @@ class VoronoiCoverage:
         # in_and_ext = np.logical_and(bool_val, np.logical_not(pdf_int))
         weights_in = pdf[in_and_int]
 
-        n_cells_normalization = in_and_int.sum().item()
+        # n_cells_normalization = in_and_int.sum().item()
 
         # weights_ext = pdf[np.logical_not(pdf_int)]
         reward = (
@@ -1034,7 +1036,6 @@ class VoronoiCoverage:
                 * torch.linalg.norm(pdf_grid[in_and_int] - robot, axis=1) ** 2
                 * self.grid_spacing**2
             )
-            / n_cells_normalization
             # + (0.5 * self.cells_range * self.grid_spacing) ** 2
             # * torch.sum(weights_ext)
             # * self.grid_spacing**2
