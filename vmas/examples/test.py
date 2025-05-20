@@ -65,7 +65,7 @@ LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
 # environment
 MAX_STEPS = 50
 SCENARIO_NAME = "voronoi"
-N_AGENTS = 4
+N_AGENTS = 5
 N_GAUSSIANS = 3
 LIDAR_RANGE = 0.6
 
@@ -239,7 +239,8 @@ def evaluate_and_record(policy, iteration: int):
 
     # video
     video_file = (
-        VIDEO_DIR / f"{SCENARIO_NAME}_iter_{iteration}_eval_{N_GAUSSIANS}gauss.mp4"
+        VIDEO_DIR
+        / f"{SCENARIO_NAME}_iter_{iteration}_eval_{N_AGENTS}ag_{N_GAUSSIANS}gauss.mp4"
     )
     save_video(frames, video_file)
 
@@ -341,7 +342,9 @@ def evaluate_and_record(policy, iteration: int):
 
 # final artefacts
 
-policy.load_state_dict(torch.load(POLICY_DIR / "policy_iter_0.pt", weights_only=True))
+policy.load_state_dict(
+    torch.load(POLICY_DIR / "decentralized_policy.pt", weights_only=True)
+)
 policy.eval()
 print("policy: ", policy)
 evaluate_and_record(policy, N_ITERS)
