@@ -63,8 +63,8 @@ LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
 # environment
 MAX_STEPS = 500
 SCENARIO_NAME = "voronoi"
-N_AGENTS = 3
-N_GAUSSIANS = 1
+N_AGENTS = int(input("Number of agents: "))
+N_GAUSSIANS = int(input("Number of gaussians: "))
 SEED = 0
 
 # ────────────────────────────────────────────────────────────────────────────
