@@ -99,14 +99,18 @@ def build_policy(env: TransformedEnv):
 
     policy = ProbabilisticActor(
         module=policy_module,
-        spec=env.action_spec_unbatched,
+        spec=env.action_spec,  # env.action_spec_unbatched,
         in_keys=[("agents", "loc"), ("agents", "scale")],
         out_keys=[env.action_key],
         distribution_class=TanhNormal,
         distribution_kwargs={
-            "low": env.full_action_spec_unbatched[env.action_key].space.low,
-            "high": env.full_action_spec_unbatched[env.action_key].space.high,
+            "low": env.full_action_spec[env.action_key].space.low,
+            "high": env.full_action_spec[env.action_key].space.high,
         },
+        # distribution_kwargs={
+        #    "low": env.full_action_spec_unbatched[env.action_key].space.low,
+        #    "high": env.full_action_spec_unbatched[env.action_key].space.high,
+        # },
         return_log_prob=True,
     )
 
@@ -130,21 +134,52 @@ def load_trained_policy(env: TransformedEnv, ckpt_path: str) -> ProbabilisticAct
 # Roll-out helpers
 # ──────────────────────────────────────────────────────────────────────
 @torch.no_grad()
-def rollout_learned(env: TransformedEnv, policy, steps: int) -> List[float]:
+def rollout_learned(env: TransformedEnv, policy, steps: int) -> list[float]:
+    """
+    Evaluate `policy` for `steps` steps in `env` (TorchRL 0.6 / TensorDict 0.7).
+
+    Returns
+    -------
+    list[float]
+        Global reward per step (mean over every env & agent dimension).
+    """
     td = env.reset()
-    trace = []
+    trace: list[float] = []
+
+    act_key = env.action_key  # ('agents', 'action')
+    rew_key = env.reward_key  # ('agents', 'episode_reward') after transform
+    batch_sz = env.batch_size  # torch.Size([num_envs])
+
     for _ in tqdm(range(steps), desc="Learned"):
-        td = policy(td)
-        acts = [td[env.action_key][:, i] for i in range(N_AGENTS)]
-        obs, rews, *_ = env.step(acts)
-        td = TensorDict(
-            {("agents", "observation"): torch.stack(obs, 1)},
-            batch_size=[env.num_envs],
+        # ─ 1. policy ⇒ action ───────────────────────────────────────────────
+        td = policy(td)  # adds td[act_key]
+
+        td_in = TensorDict(
+            {act_key: td[act_key].to(env.device)},
+            batch_size=batch_sz,
             device=env.device,
         )
 
-        g = torch.stack(rews, 1).mean(1).mean(0)  # global reward
-        trace.append(g.cpu().item())
+        # ─ 2. env step ──────────────────────────────────────────────────────
+        td_out = env.step(td_in)  # TorchRL 0.6
+
+        nxt = td_out.get("next", td_out)  # next-state container
+
+        # ─ 3. global reward (mean over *all* dims) ──────────────────────────
+        rews = nxt.get(rew_key, None)  # after RewardSum
+        if rews is None:  # fallback to raw env reward
+            rews = nxt[("agents", "reward")]
+
+        g = rews.mean()  # scalar tensor
+        trace.append(g.item())
+
+        # ─ 4. next observation for the policy ───────────────────────────────
+        td = TensorDict(
+            {("agents", "observation"): nxt[("agents", "observation")]},
+            batch_size=batch_sz,
+            device=env.device,
+        )
+
     return trace
 
 
@@ -172,14 +207,14 @@ def rollout_heuristic(env, heuristic_cls, steps: int) -> List[float]:
 def compare(
     heuristic: Type[BaseHeuristicPolicy],
     n_steps: int = 300,
-    n_envs: int = 1,
+    n_envs: int = 10,
     seed: int = 2,
     render: bool = False,
-    save_vid: bool = False,
+    save_vid: bool = True,
 ):
     env_h = make_native_vmas_env(n_envs, seed, **ENV_KWARGS)
     env_p = make_torchrl_env(n_envs, seed, **ENV_KWARGS)
-    print("TorchRL-env action dim:", env_p.action_spec.shape[-1])  # expect 2
+    # print("TorchRL-env action dim:", env_p.action_spec.shape[-1])  # expect 2
 
     policy = load_trained_policy(env_p, CHKPT_PATH)
 
@@ -200,9 +235,6 @@ def compare(
         frames = env_p.render(mode="gif", n_steps=n_steps)
         if save_vid:
             save_video(f"{SCENARIO}_learned", frames, 1 / env_p.scenario.world.dt)
-
-    env_h.close()
-    env_p.close()
 
 
 # ──────────────────────────────────────────────────────────────────────
