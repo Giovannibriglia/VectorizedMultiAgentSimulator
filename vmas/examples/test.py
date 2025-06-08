@@ -19,6 +19,7 @@ from typing import List
 
 import cv2  # required for mp4 encoding
 import torch
+import imageio
 
 # TorchRL / VMAS imports
 from tensordict.nn import set_composite_lp_aggregate, TensorDictModule
@@ -50,7 +51,7 @@ VMAS_DEVICE = DEVICE
 
 # sampling / training
 FRAMES_PER_BATCH = 6_000
-N_ITERS = 500
+N_ITERS = 200
 NUM_EPOCHS = 30
 MINIBATCH_SIZE = 400
 LR = 3e-4
@@ -63,10 +64,11 @@ N_CHECKPOINTS = 20  # number of videos / checkpoints you want
 LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
 
 # environment
-MAX_STEPS = 50
+MAX_STEPS = 500
 SCENARIO_NAME = "voronoi"
 N_AGENTS = 5
 N_GAUSSIANS = 3
+N_OBSTACLES = 4
 LIDAR_RANGE = 0.6
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -97,6 +99,7 @@ raw_env = VmasEnv(
     max_steps=MAX_STEPS,
     device=VMAS_DEVICE,
     n_agents=N_AGENTS,
+    n_obstacles=N_OBSTACLES,
     n_gaussians=N_GAUSSIANS,
     lidar_range=LIDAR_RANGE,
 )
@@ -217,12 +220,8 @@ def save_video(frames: List[torch.Tensor], filename: Path, fps: int = 30):
     if not frames:
         print("[warning] no frames to write", filename)
         return
-    h, w, _ = frames[0].shape
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    vout = cv2.VideoWriter(str(filename), fourcc, fps, (w, h))
-    for fr in frames:
-        vout.write(fr)
-    vout.release()
+    frames_np = [fr.cpu().numpy() if isinstance(fr, torch.Tensor) else fr for fr in frames]
+    imageio.mimsave(str(filename), frames_np, fps=fps, macro_block_size=None)
 
 
 def evaluate_and_record(policy, iteration: int):
@@ -347,4 +346,4 @@ policy.load_state_dict(
 )
 policy.eval()
 print("policy: ", policy)
-evaluate_and_record(policy, N_ITERS)
+evaluate_and_record(policy, MAX_STEPS)
