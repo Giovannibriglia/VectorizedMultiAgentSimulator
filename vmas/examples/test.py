@@ -70,6 +70,7 @@ N_AGENTS = 5
 N_GAUSSIANS = 3
 N_OBSTACLES = 4
 LIDAR_RANGE = 0.6
+DYNAMIC_PDF = True
 
 # ────────────────────────────────────────────────────────────────────────────
 # Experiment folder layout
@@ -102,6 +103,7 @@ raw_env = VmasEnv(
     n_obstacles=N_OBSTACLES,
     n_gaussians=N_GAUSSIANS,
     lidar_range=LIDAR_RANGE,
+    dynamic=DYNAMIC_PDF,
 )
 
 env = TransformedEnv(
