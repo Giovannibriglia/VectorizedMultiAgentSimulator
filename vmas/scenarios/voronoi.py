@@ -12,7 +12,7 @@ from torch import Tensor
 from torch.distributions import MultivariateNormal
 
 from vmas import render_interactively
-from vmas.simulator.core import Agent, Entity, Line, Sphere, World, Landmark
+from vmas.simulator.core import Agent, Entity, Line, Sphere, World, Landmark, Box
 from vmas.simulator.heuristic_policy import BaseHeuristicPolicy
 from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
@@ -154,7 +154,18 @@ class Scenario(BaseScenario):
             )
             world.add_landmark(obstacle)
             self.obstacles.append(obstacle)
-
+        
+        # set obstacle in a corner to make the env non-convex (L-shaped)
+        # obstacle = Landmark(
+        #     name=f"obstacle_{i}",
+        #     collide=True,
+        #     movable=False,
+        #     shape=Box(length=1.0, width=1.0),
+        #     color=Color.RED,
+        # )
+        # world.add_landmark(obstacle)
+        # self.obstacles.append(obstacle)
+        
         x_grid = torch.linspace(-self.xdim, self.xdim, self.n_x_cells)
         y_grid = torch.linspace(-self.ydim, self.ydim, self.n_y_cells)
         xg, yg = torch.meshgrid(x_grid, y_grid)
@@ -208,8 +219,10 @@ class Scenario(BaseScenario):
             self.world,
             env_index,
             self._min_dist_between_entities,
-            x_bounds=(-self.xdim, self.xdim),
-            y_bounds=(-self.ydim, self.ydim),
+            # x_bounds=(-self.xdim, self.xdim),
+            # y_bounds=(-self.ydim, self.ydim),
+            x_bounds=(0.45, 0.55),
+            y_bounds=(0.45, 0.55),
             #occupied_positions=target_pos.unsqueeze(1),
         )
 
