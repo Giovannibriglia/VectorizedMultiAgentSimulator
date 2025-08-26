@@ -68,10 +68,10 @@ MAX_STEPS = 500
 SCENARIO_NAME = "voronoi"
 N_AGENTS = 1
 N_GAUSSIANS = 3
-N_OBSTACLES = 4
+N_OBSTACLES = 0
 LIDAR_RANGE = 0.6
 DYNAMIC_PDF = True
-N_RAYS = 360
+N_RAYS = 50
 
 # ────────────────────────────────────────────────────────────────────────────
 # Experiment folder layout
@@ -154,6 +154,9 @@ def getPolicy(policy_name: str = "turtle_policy.pt", n_rays=360) -> Probabilisti
     )
 
     policy.load_state_dict(
-        torch.load(POLICY_DIR / policy_name, weights_only=True)
+        torch.load(POLICY_DIR / policy_name, weights_only=True, map_location=DEVICE)
     )
     return policy
+
+pol = getPolicy("decentralized_policy.pt", 200)
+print("Policy: ", pol)
