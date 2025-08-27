@@ -79,13 +79,14 @@ N_RAYS = 50
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 ROOT_DIR = Path.cwd()
+HOME_DIR = Path.home()
 POLICY_DIR = ROOT_DIR / "saved_policies"
 VIDEO_DIR = ROOT_DIR / "eval_videos"
 # SCALAR_DIR = ROOT_DIR / "scalars"
 # for d in (POLICY_DIR, VIDEO_DIR, SCALAR_DIR):
 #     d.mkdir(parents=True, exist_ok=True)
 
-print("Experiment root:", ROOT_DIR)
+# print("Experiment root:", ROOT_DIR)
 
 # ────────────────────────────────────────────────────────────────────────────
 # Build env & networks
@@ -94,8 +95,8 @@ print("Experiment root:", ROOT_DIR)
 set_composite_lp_aggregate(False)
 
 NUM_VMAS_ENVS = FRAMES_PER_BATCH // MAX_STEPS
-print("Num VMAS envs: ", NUM_VMAS_ENVS)
-def getPolicy(policy_name: str = "turtle_policy.pt", n_rays=360) -> ProbabilisticActor:
+# print("Num VMAS envs: ", NUM_VMAS_ENVS)
+def getPolicy(policy_name: str = "VectorizedMultiAgentSimulator/vmas/examples/saved_policies/turtle_policy.pt", n_rays=360) -> ProbabilisticActor:
     raw_env = VmasEnv(
         scenario=SCENARIO_NAME,
         num_envs=NUM_VMAS_ENVS,
@@ -118,7 +119,7 @@ def getPolicy(policy_name: str = "turtle_policy.pt", n_rays=360) -> Probabilisti
 
     obs_dim = env.observation_spec["agents", "observation"].shape[-1]
     action_dim = env.action_spec.shape[-1]
-    print("Action dim: ", action_dim)
+    # print("Action dim: ", action_dim)
 
     policy_backbone = MultiAgentMLP(
         n_agent_inputs=obs_dim,
@@ -138,7 +139,7 @@ def getPolicy(policy_name: str = "turtle_policy.pt", n_rays=360) -> Probabilisti
         out_keys=[("agents", "loc"), ("agents", "scale")],
     )
 
-    print("Env action keys: ", env.action_key)
+    # print("Env action keys: ", env.action_key)
 
     policy = ProbabilisticActor(
         module=policy_module,
@@ -158,5 +159,5 @@ def getPolicy(policy_name: str = "turtle_policy.pt", n_rays=360) -> Probabilisti
     )
     return policy
 
-pol = getPolicy("decentralized_policy.pt", 200)
-print("Policy: ", pol)
+#pol = getPolicy("decentralized_policy.pt", 200)
+#print("Policy: ", pol)
