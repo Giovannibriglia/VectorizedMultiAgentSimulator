@@ -51,7 +51,8 @@ FRAMES_PER_BATCH = 6_000
 N_ITERS = 500
 NUM_EPOCHS = 30
 MINIBATCH_SIZE = 400
-LR = 3e-4
+# LR = 3e-4
+LR = 1e-3
 MAX_GRAD_NORM = 1.0
 CLIP_EPSILON = 0.2
 GAMMA = 0.99
@@ -66,6 +67,9 @@ SCENARIO_NAME = "voronoi"
 N_AGENTS = 3
 N_GAUSSIANS = 1
 LIDAR_RANGE = 0.6
+N_RAYS = 50
+N_OBSTACLES = 0
+IF_WALLS = False
 
 # ────────────────────────────────────────────────────────────────────────────
 # Experiment folder layout
@@ -97,6 +101,9 @@ raw_env = VmasEnv(
     n_agents=N_AGENTS,
     n_gaussians=N_GAUSSIANS,
     lidar_range=LIDAR_RANGE,
+    n_rays=N_RAYS,
+    n_obstacles=N_OBSTACLES,
+    if_walls=IF_WALLS,
 )
 
 env = TransformedEnv(
@@ -182,7 +189,7 @@ loss_module = ClipPPOLoss(
     critic_network=critic,
     clip_epsilon=CLIP_EPSILON,
     entropy_coef=ENTROPY_EPS,
-    normalize_advantage=False,
+    normalize_advantage=True,
 )
 loss_module.set_keys(
     reward=env.reward_key,
@@ -299,7 +306,13 @@ for it, data in enumerate(collector):
         for _ in range(FRAMES_PER_BATCH // MINIBATCH_SIZE):
             batch = replay_buffer.sample()
             losses = loss_module(batch)
-            loss = sum(losses.values())
+            # loss = sum(losses.values())
+            loss = (
+                losses["loss_objective"]
+                + losses["loss_critic"]
+                + losses["loss_entropy"]
+            )
+            # print("Loss: ", loss.item())
             loss.backward()
             torch.nn.utils.clip_grad_norm_(loss_module.parameters(), MAX_GRAD_NORM)
             optimizer.step()

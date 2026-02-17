@@ -64,13 +64,15 @@ N_CHECKPOINTS = 20  # number of videos / checkpoints you want
 LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
 
 # environment
-MAX_STEPS = 500
+MAX_STEPS = 300
 SCENARIO_NAME = "voronoi"
-N_AGENTS = 5
+N_AGENTS = 3
 N_GAUSSIANS = 3
-N_OBSTACLES = 4
-LIDAR_RANGE = 0.6
+N_OBSTACLES = 0
+LIDAR_RANGE = 0.5
 DYNAMIC_PDF = True
+N_RAYS = 50
+IF_WALLS = True
 
 # ────────────────────────────────────────────────────────────────────────────
 # Experiment folder layout
@@ -92,7 +94,8 @@ print("Experiment root:", ROOT_DIR)
 
 set_composite_lp_aggregate(False)
 
-NUM_VMAS_ENVS = FRAMES_PER_BATCH // MAX_STEPS
+# NUM_VMAS_ENVS = FRAMES_PER_BATCH // MAX_STEPS
+NUM_VMAS_ENVS = 2
 raw_env = VmasEnv(
     scenario=SCENARIO_NAME,
     num_envs=NUM_VMAS_ENVS,
@@ -104,6 +107,8 @@ raw_env = VmasEnv(
     n_gaussians=N_GAUSSIANS,
     lidar_range=LIDAR_RANGE,
     dynamic=DYNAMIC_PDF,
+    n_rays=N_RAYS,
+    if_walls=IF_WALLS,
 )
 
 env = TransformedEnv(
@@ -241,7 +246,7 @@ def evaluate_and_record(policy, iteration: int):
     # video
     video_file = (
         VIDEO_DIR
-        / f"{SCENARIO_NAME}_iter_{iteration}_eval_{N_AGENTS}ag_{N_GAUSSIANS}gauss.mp4"
+        / f"test.mp4"
     )
     save_video(frames, video_file)
 
@@ -344,7 +349,7 @@ def evaluate_and_record(policy, iteration: int):
 # final artefacts
 
 policy.load_state_dict(
-    torch.load(POLICY_DIR / "decentralized_policy.pt", weights_only=True)
+    torch.load(POLICY_DIR / "policy_iter_375.pt", weights_only=True)
 )
 policy.eval()
 print("policy: ", policy)

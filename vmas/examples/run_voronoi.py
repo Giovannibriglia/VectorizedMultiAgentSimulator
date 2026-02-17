@@ -19,6 +19,7 @@ vmas_dir = Path(__file__).parent
 
 import os
 import sys
+import numpy as np
 
 sys.path.append(os.path.dirname(vmas_dir))
 
@@ -51,6 +52,7 @@ def run_heuristic(
         continuous_actions=True,
         wrapper=None,
         seed=seed,
+
         # Environment specific variables
         **env_kwargs,
     )
@@ -78,8 +80,24 @@ def run_heuristic(
         # voro.partitioning()
         # t_act = time.time()
         for i in range(n_agents):
+            # pos = obs[i][0, :2]
+            # vel = obs[i][0, 2:4]
+            # meas = obs[i][0, 4:(4 + 360)]
+            # pdf = obs[i][0, (4 + 360):]
+            # pdf = pdf.reshape(7, 7)
+            # pdf_rot = torch.zeros_like(pdf)
+            # for row in range(pdf.shape[0]):
+            #     pdf_rot[:, row] = pdf[row, :]
+            # pdf_rot = pdf_rot.cpu().detach().numpy()
+
+            # fig, ax = plt.subplots()
+            # xg = np.linspace(-1, 1, 7)
+            # yg = np.linspace(-1, 1, 7)
+            # X,Y = np.meshgrid(xg, yg)
+            # ax.pcolormesh(X, Y, pdf_rot)
+            # plt.show()
             actions[i] = policy.compute_action(obs[i], u_range=env.agents[i].u_range)
-            # print(f"{i}", actions[i])
+            print(f"Action {i}", actions[i])
         # print("t action: ", time.time()-t_act)
         obs, rews, dones, info = env.step(actions)
         # print(rews)
@@ -110,7 +128,7 @@ def run_heuristic(
             label=f"ag{n}: {torch.mean(rewards_for_plot[:, env_n, n]):.3f}",
         )
     plt.plot(global_rewards, label="global")
-    # plt.plot(sum_rewards, label="sum")
+    plt.plot(sum_rewards, label="sum")
     plt.legend(loc="best")
     plt.show()
 
@@ -141,7 +159,7 @@ if __name__ == "__main__":
         grid_spacing=0.2,
         lidar_range=0.5,
         n_agents=3,
-        seed=2,
+        seed=42,
     )
 
 # ok: [True, True], [
