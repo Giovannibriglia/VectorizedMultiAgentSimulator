@@ -64,7 +64,7 @@ N_CHECKPOINTS = 20  # number of videos / checkpoints you want
 LOG_EVERY = max(1, N_ITERS // N_CHECKPOINTS)
 
 # environment
-MAX_STEPS = 500
+MAX_STEPS = 300
 SCENARIO_NAME = "voronoi"
 N_AGENTS = 8
 N_GAUSSIANS = 1
@@ -72,7 +72,7 @@ N_OBSTACLES = 5
 LIDAR_RANGE = 0.5
 DYNAMIC_PDF = True
 N_RAYS = 50
-IF_WALLS = True
+IF_WALLS = False
 
 # ────────────────────────────────────────────────────────────────────────────
 # Experiment folder layout
@@ -349,7 +349,7 @@ def evaluate_and_record(policy, iteration: int):
 # final artefacts
 
 policy.load_state_dict(
-    torch.load(POLICY_DIR / "policy_1006.pt", weights_only=True)
+    torch.load(POLICY_DIR / "policy_final.pt", weights_only=True)
 )
 policy.eval()
 print("policy: ", policy)

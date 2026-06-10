@@ -100,7 +100,9 @@ class Scenario(BaseScenario):
         self.last_centroid = torch.zeros((batch_dim, self.n_agents, 2), device=device)
 
         self.angle_start = kwargs.pop("angle_start", 0.05)
+        # self.angle_start = kwargs.pop("angle_start", -0.25 * torch.pi)
         self.angle_end = kwargs.pop("angle_end", 2 * torch.pi + 0.05)
+        # self.angle_end = kwargs.pop("angle_end", 0.25 * torch.pi)
         self.n_rays = kwargs.pop("n_rays", 50)
         self.cells_range = kwargs.pop(
             "cells_range", int(self.lidar_range / self.grid_spacing)
@@ -133,7 +135,11 @@ class Scenario(BaseScenario):
 
         self.steps = 0
 
-        self.pdf = [None] * batch_dim
+        self.pdf = None
+        self.phi_mass = torch.zeros((batch_dim,), device=device, dtype=torch.float32)
+        self._cached_agent_rewards = torch.zeros(
+            (batch_dim, self.n_agents), device=device, dtype=torch.float32
+        )
         self.Kp = 0.8
         self.cell_area = 2 * self.xdim * 2 * self.ydim * self.grid_spacing**2
 
@@ -235,12 +241,44 @@ class Scenario(BaseScenario):
                 world.add_landmark(wall)
                 self.walls.append(wall)
 
-        x_grid = torch.linspace(-self.xdim, self.xdim, self.n_x_cells)
-        y_grid = torch.linspace(-self.ydim, self.ydim, self.n_y_cells)
-        xg, yg = torch.meshgrid(x_grid, y_grid)
-        self.xy_grid = torch.vstack((xg.ravel(), yg.ravel())).T.to(world.device)
+        x_grid = torch.linspace(-self.xdim, self.xdim, self.n_x_cells, device=device)
+        y_grid = torch.linspace(-self.ydim, self.ydim, self.n_y_cells, device=device)
+        xg, yg = torch.meshgrid(x_grid, y_grid, indexing="ij")
+        self.xy_grid = torch.stack((xg.reshape(-1), yg.reshape(-1)), dim=-1)
+
+        offset_vals = (
+            torch.arange(-self.cells_range, self.cells_range + 1, device=device)
+            * self.grid_spacing
+        )
+        off_x, off_y = torch.meshgrid(offset_vals, offset_vals, indexing="ij")
+        self.local_offsets = torch.stack((off_x.reshape(-1), off_y.reshape(-1)), dim=-1)
+        self.pdf = torch.zeros(
+            (batch_dim, self.xy_grid.shape[0]), device=device, dtype=torch.float32
+        )
 
         return world
+
+    def _recompute_pdf(self, env_index: int = None):
+        if env_index is None:
+            value = self.xy_grid.unsqueeze(1).expand(-1, self.world.batch_dim, -1)
+            pdf = torch.stack(
+                [gaussian.log_prob(value).exp() for gaussian in self.gaussians],
+                dim=-1,
+            ).sum(-1)
+            self.pdf = pdf.transpose(0, 1).contiguous()
+            self.sampled[:] = False
+            self.normalize_pdf(env_index=None)
+            sums = self.pdf.sum(dim=1, keepdim=True).clamp_min(1e-8)
+            self.pdf = self.pdf / sums
+            dA = self.grid_spacing**2
+            self.phi_mass = (self.pdf * dA).sum(dim=1)
+            return
+
+        self.pdf[env_index] = self.sample_single_env(self.xy_grid, env_index, norm=False)
+        self.sampled[env_index] = False
+        self.normalize_pdf(env_index=env_index)
+        self.pdf[env_index] = self.pdf[env_index] / self.pdf[env_index].sum().clamp_min(1e-8)
+        self.phi_mass[env_index] = (self.pdf[env_index] * (self.grid_spacing**2)).sum()
 
     def spawn_walls(self, env_index):
         for i, wall in enumerate(self.walls):
@@ -304,36 +342,16 @@ class Scenario(BaseScenario):
             )
             for loc, cov_matrix in zip(self.locs, self.cov_matrices)
         ]
-
-        # xy_grid = xy_grid.unsqueeze(0).expand(self.world.batch_dim, -1, -1)
-        self.pdf = [
-            self.sample_single_env(self.xy_grid, i) for i in range(self.world.batch_dim)
-        ]
-        if env_index is None:
-            self.max_pdf[:] = 0
-            self.sampled[:] = False
-        else:
-            self.max_pdf[env_index] = 0
-            self.sampled[env_index] = False
-        self.normalize_pdf(env_index=env_index)
-
-        # print("Sum of pdf before normalization: ", torch.sum(self.pdf[0]))
-        # max_values = [torch.max(self.pdf[i]) for i in range(self.world.batch_dim)]
-        sums = [torch.sum(self.pdf[i]) for i in range(self.world.batch_dim)]
-        self.pdf = [self.pdf[i] / sums[i] for i in range(self.world.batch_dim)]
-        # print("Normalized pdf: ", self.pdf[0])
-        # print("Sum of pdf after normalization: ", torch.sum(self.pdf[0]))
-
-        phi_flat = torch.stack(self.pdf, dim=0)  # [B, P]
-        dA = self.grid_spacing**2  # area element
-        self.phi_mass = (phi_flat * dA).sum(dim=1)  # [B]
+        self._recompute_pdf(env_index=env_index)
 
         # reset counters
         if env_index is None:
             self.steps = 0
             self.n_collisions.zero_()
+            self._cached_agent_rewards.zero_()
         else:
             self.n_collisions[env_index].zero_()
+            self._cached_agent_rewards[env_index].zero_()
 
         # random obstacles
         ScenarioUtils.spawn_entities_randomly(
@@ -453,25 +471,10 @@ class Scenario(BaseScenario):
         return v
 
     def normalize_pdf(self, env_index: int = None):
-        xpoints = torch.arange(
-            -self.xdim, self.xdim, self.grid_spacing, device=self.world.device
-        )
-        ypoints = torch.arange(
-            -self.ydim, self.ydim, self.grid_spacing, device=self.world.device
-        )
         if env_index is not None:
-            ygrid, xgrid = torch.meshgrid(ypoints, xpoints, indexing="ij")
-            pos = torch.stack((xgrid, ygrid), dim=-1).reshape(-1, 2)
-            sample = self.sample_single_env(pos, env_index, norm=False)
-            self.max_pdf[env_index] = sample.max()
+            self.max_pdf[env_index] = self.pdf[env_index].max()
         else:
-            for x in xpoints:
-                for y in ypoints:
-                    pos = torch.tensor(
-                        [x, y], device=self.world.device, dtype=torch.float32
-                    ).repeat(self.world.batch_dim, 1)
-                    sample = self.sample(pos, norm=False)
-                    self.max_pdf = torch.maximum(self.max_pdf, sample)
+            self.max_pdf = self.pdf.max(dim=1).values
 
     def compute_voronoi_partitioning(self, robot_positions):
         """
@@ -487,12 +490,10 @@ class Scenario(BaseScenario):
 
         # Compute distances from all grid points to all robots at once
         # xy_grid: [P, 2], robot_positions: [N, 2] -> dists: [N, P]
-        dists = torch.linalg.norm(
-            self.xy_grid.unsqueeze(0) - robot_positions.unsqueeze(1), dim=2
-        )
+        d2 = ((self.xy_grid.unsqueeze(0) - robot_positions.unsqueeze(1)) ** 2).sum(dim=2)
 
         # Find closest robot for each grid point
-        closest_robot = torch.argmin(dists, dim=0)  # [P]
+        closest_robot = torch.argmin(d2, dim=0)  # [P]
 
         # Create masks for all robots at once using broadcasting
         robot_indices = torch.arange(n_robots, device=robot_positions.device)
@@ -510,100 +511,62 @@ class Scenario(BaseScenario):
 
 
     def reward(self, agent: Agent) -> Tensor:
-        if self.world.agents.index(agent) == 0:
+        agent_idx = self.world.agents.index(agent)
+        if agent_idx == 0:
             self.steps += 1
-        robots = torch.zeros(
-            (self.world.batch_dim, len(self.world.agents), 2), device=self.world.device
-        )
-        for i, ag in enumerate(self.world.agents):
-            robots[:, i, :] = ag.state.pos  # [B, 2]
 
-        rewards = torch.zeros(self.world.batch_dim, device=self.world.device)
-        for env_idx in range(self.world.batch_dim):
-            voronoi_masks = self.compute_voronoi_partitioning(robots[env_idx])
-
-            for i, a in enumerate(self.world.agents):
-                voronoi_points = self.xy_grid[voronoi_masks[i]]
-                phi_values = self.pdf[env_idx][voronoi_masks[i]]
-                # phi_values = phi_raw / (torch.sum(phi_raw) + 1e-6)
-                d2 = torch.sum((voronoi_points - robots[env_idx, i]) ** 2, dim=1)
-                cell_area = 2 * self.xdim * 2 * self.ydim * self.grid_spacing**2
-                mass = torch.sum(phi_values) * cell_area  # / self.grid_spacing**2
-                # centroid = torch.sum(voronoi_points * phi_values.unsqueeze(-1), dim=0) / (mass + 1e-6)
-
-                # Collision penalty
-                if not hasattr(agent, "agent_collision_rew"):
-                    agent.agent_collision_rew = torch.zeros(
-                        self.world.batch_dim, device=self.world.device
-                    )
-                agent.agent_collision_rew[:] = 0
-                for j, other_agent in enumerate(self.world.agents):
-                    if j != i:
-                        if self.world.collides(other_agent, agent):
-                            distance = self.world.get_distance(other_agent, agent)
-                            agent.agent_collision_rew[
-                                distance <= self.min_collision_distance
-                            ] += self.agent_collision_penalty
-                collision_penalty = agent.agent_collision_rew
-
-                # Inter-agent repulsion (inverse distance squared)
-                # repulsion_penalty = 0
-                # agent_pos = robots[env_idx, i]
-                # for j, other_agent in enumerate(self.world.agents):
-                #     if j != i:
-                #         other_pos = robots[env_idx, j]
-                #         dist = torch.linalg.norm(agent_pos - other_pos)
-                #         repulsion_penalty += self.repulsion_weight / (dist**2 + 1e-6)
-
-                rewards[env_idx] += (
-                    -0.5 * torch.sum(phi_values * d2) #* cell_area / (mass + 1e-6)
-                    - collision_penalty[env_idx]
-                )
-        return rewards
-
-    def observation(self, agent: Agent) -> Tensor:
-        if self.dynamic and self.steps % 100 == 0.0:
-            for env_index in range(self.world.batch_dim):
+            if self.dynamic and self.steps % 100 == 0:
                 for i in range(len(self.locs)):
-                    x = torch.zeros(
-                        (1,) if env_index is not None else (self.world.batch_dim, 1),
+                    x = torch.empty(
+                        (self.world.batch_dim, 1),
                         device=self.world.device,
                         dtype=torch.float32,
                     ).uniform_(-self.xdim, self.xdim)
-                    y = torch.zeros(
-                        (1,) if env_index is not None else (self.world.batch_dim, 1),
+                    y = torch.empty(
+                        (self.world.batch_dim, 1),
                         device=self.world.device,
                         dtype=torch.float32,
                     ).uniform_(-self.ydim, self.ydim)
-                    new_loc = torch.cat([x, y], dim=-1)
-                    # new_loc = torch.tensor([0.0, 0.0]).to(self.world.device)
-                    if env_index is None:
-                        self.locs[i] = new_loc
-                    else:
-                        self.locs[i][env_index] = new_loc
+                    self.locs[i] = torch.cat([x, y], dim=-1)
 
                 self.gaussians = [
-                    MultivariateNormal(
-                        loc=loc,
-                        covariance_matrix=cov_matrix,
-                    )
+                    MultivariateNormal(loc=loc, covariance_matrix=cov_matrix)
                     for loc, cov_matrix in zip(self.locs, self.cov_matrices)
                 ]
+                self._recompute_pdf(env_index=None)
 
-            # xy_grid = xy_grid.unsqueeze(0).expand(self.world.batch_dim, -1, -1)
-            self.pdf = [
-                self.sample_single_env(self.xy_grid, env)
-                for env in range(self.world.batch_dim)
-            ]
+            robots = torch.stack([ag.state.pos for ag in self.world.agents], dim=1)
+            B, N = robots.shape[:2]
+            P = self.xy_grid.shape[0]
 
-            # if env_index is None:
-            #     self.max_pdf[:] = 0
-            #     self.sampled[:] = False
-            # else:
-            #     self.max_pdf[env_index] = 0
-            #     self.sampled[env_index] = False
-            # self.normalize_pdf(env_index=env_index)
+            diff = self.xy_grid.view(1, 1, P, 2) - robots.unsqueeze(2)
+            d2 = (diff**2).sum(dim=-1)
+            closest_robot = d2.argmin(dim=1)
+            assign_mask = (
+                torch.nn.functional.one_hot(closest_robot, num_classes=N)
+                .permute(0, 2, 1)
+                .to(self.pdf.dtype)
+            )
 
+            phi_values = self.pdf.unsqueeze(1)
+            coverage_cost = 0.5 * (phi_values * assign_mask * d2).sum(dim=2)
+
+            pdiff = robots.unsqueeze(2) - robots.unsqueeze(1)
+            pd2 = (pdiff**2).sum(dim=-1)
+            eye = torch.eye(N, device=self.world.device, dtype=torch.bool).unsqueeze(0)
+            coll_mask = (pd2 <= self.min_collision_distance**2) & ~eye
+            colls_per_agent = coll_mask.sum(dim=-1).to(self.pdf.dtype)
+
+            self.n_collisions += colls_per_agent.to(torch.long)
+
+            collision_cost = colls_per_agent * float(abs(self.agent_collision_penalty))
+            self._cached_agent_rewards = -(coverage_cost + collision_cost)
+
+        if self.shared_rew:
+            return self._cached_agent_rewards.sum(dim=1)
+        return self._cached_agent_rewards[:, agent_idx]
+
+    def observation(self, agent: Agent) -> Tensor:
         observations = [
             agent.state.pos,
             agent.state.vel,
@@ -621,36 +584,19 @@ class Scenario(BaseScenario):
         #     [-self.grid_spacing, 0]]
 
         if not self.centralized:
-            deltas = []
-            for i in range(-self.cells_range, self.cells_range + 1):
-                for j in range(-self.cells_range, self.cells_range + 1):
-                    deltas.append([i * self.grid_spacing, j * self.grid_spacing])
-
-            for delta in deltas:
-                # occupied cell + ccw cells from bottom left
-                pos = agent.state.pos + torch.tensor(
-                    delta,
-                    device=self.world.device,
-                    dtype=torch.float32,
-                )
-                sample = self.sample(
-                    pos,
-                    update_sampled_flag=False,
-                ).unsqueeze(-1)
-                observations.append(sample)
+            query = agent.state.pos.unsqueeze(1) + self.local_offsets.unsqueeze(0)
+            query[:, :, X].clamp_(-self.world.x_semidim, self.world.x_semidim)
+            query[:, :, Y].clamp_(-self.world.y_semidim, self.world.y_semidim)
+            value = query.permute(1, 0, 2)
+            v = torch.stack(
+                [gaussian.log_prob(value).exp() for gaussian in self.gaussians],
+                dim=-1,
+            ).sum(-1).transpose(0, 1)
+            if self.norm:
+                v = v / self.max_pdf.unsqueeze(1).clamp_min(1e-8)
+            observations.append(v)
         else:
-            for x in np.linspace(-self.xdim, self.xdim, self.n_x_cells):
-                for y in np.linspace(-self.ydim, self.ydim, self.n_y_cells):
-                    xy = torch.tensor(
-                        [[x, y]],
-                        device=self.world.device,
-                        dtype=torch.float32,
-                    )
-                    sample = self.sample(
-                        xy,
-                        update_sampled_flag=False,
-                    ).unsqueeze(-1)
-                    observations.append(sample)
+            observations.append(self.pdf)
 
         return torch.cat(
             observations,
@@ -704,7 +650,7 @@ class Scenario(BaseScenario):
         # ------------------------------------------------------------------
         # stack pre‑computed PDFs  → [B,P]   (they might contain NaNs if
         # max_pdf was zero somewhere during normalisation!)
-        phi = torch.stack(self.pdf, dim=0)
+        phi = self.pdf
 
         # Replace non‑finite entries with 0
         phi = torch.nan_to_num(phi, nan=0.0, posinf=1, neginf=0.0)
