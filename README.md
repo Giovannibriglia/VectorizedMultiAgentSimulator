@@ -41,3 +41,18 @@ Before running, set the checkpoint filename/path loaded from `saved_policies/` i
 The evaluation video is saved to:
 
 - `eval_videos/test.mp4`
+
+## Observation and reward (Voronoi scenario)
+
+Each agent observation is built by concatenating:
+
+- agent position `(x, y)`
+- agent velocity `(vx, vy)`
+- LIDAR range measurements (`n_rays` values)
+- density samples from the Gaussian field
+
+By default (`centralized=False`), density samples are taken on a local square grid centered at the agent (size controlled by `cells_range` and `grid_spacing`). If `centralized=True`, density is sampled over the full map grid.
+
+Reward is computed in a centralized way: for each environment, the scenario computes the Voronoi partition induced by all agent positions, then sums a coverage cost over all agents (distance of points in each Voronoi cell weighted by the field density), plus collision penalties.
+
+Since this reward is summed at team level, the same reward value is returned to all agents.
