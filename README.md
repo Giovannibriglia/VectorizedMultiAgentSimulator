@@ -36,7 +36,7 @@ From the repository root:
 python vmas/examples/test.py
 ```
 
-Before running, set the checkpoint filename/path loaded from `saved_policies/` in `vmas/examples/test.py` (current default is `policy_1006.pt`).
+Before running, set the checkpoint filename/path loaded from `saved_policies/` in `vmas/examples/test.py` (current default is `policy_final.pt`).
 
 The evaluation video is saved to:
 
