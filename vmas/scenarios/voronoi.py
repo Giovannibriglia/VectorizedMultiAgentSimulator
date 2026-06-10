@@ -15,6 +15,7 @@ from vmas.simulator.scenario import BaseScenario
 from vmas.simulator.sensors import Lidar
 from vmas.simulator.utils import Color, ScenarioUtils, X, Y
 
+
 class RewardNormalizerTorch:
     def __init__(self, eps=1e-8):
         # These start as CPU tensors but will be moved to the correct device
@@ -79,7 +80,7 @@ class Scenario(BaseScenario):
         self.grid_spacing = kwargs.pop("grid_spacing", 0.1)
 
         self.min_collision_distance = kwargs.pop("min_collision_distance", 0.05)
-        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 0.1)
+        self.agent_collision_penalty = kwargs.pop("agent_collision_penalty", 100.0)
         self.n_obstacles = kwargs.pop("n_obstacles", 0)
         self.L_env = kwargs.pop("L_env", False)
         self.n_gaussians = kwargs.pop("n_gaussians", 1)
@@ -88,6 +89,7 @@ class Scenario(BaseScenario):
         self.spawn_same_pos = kwargs.pop("spawn_same_pos", False)
         self.norm = kwargs.pop("norm", True)
         self.dynamic = kwargs.pop("dynamic", False)
+        self.repulsion_weight = kwargs.pop("repulsion_weight", 0.01)
 
         self.n_collisions = torch.zeros(
             batch_dim, self.n_agents, device=device, dtype=torch.long
@@ -132,7 +134,8 @@ class Scenario(BaseScenario):
         self.steps = 0
 
         self.pdf = [None] * batch_dim
-        self.Kp = 0.8  # proportional gain
+        self.Kp = 0.8
+        self.cell_area = 2 * self.xdim * 2 * self.ydim * self.grid_spacing**2
 
         self.voronoi = VoronoiCoverage(
             self.grid_spacing,
@@ -313,7 +316,7 @@ class Scenario(BaseScenario):
             self.max_pdf[env_index] = 0
             self.sampled[env_index] = False
         self.normalize_pdf(env_index=env_index)
-        
+
         # print("Sum of pdf before normalization: ", torch.sum(self.pdf[0]))
         # max_values = [torch.max(self.pdf[i]) for i in range(self.world.batch_dim)]
         sums = [torch.sum(self.pdf[i]) for i in range(self.world.batch_dim)]
@@ -321,10 +324,9 @@ class Scenario(BaseScenario):
         # print("Normalized pdf: ", self.pdf[0])
         # print("Sum of pdf after normalization: ", torch.sum(self.pdf[0]))
 
-        phi_flat = torch.stack(self.pdf, dim=0)   # [B, P]
-        dA = self.grid_spacing**2                 # area element
-        self.phi_mass = (phi_flat * dA).sum(dim=1)     # [B]
-
+        phi_flat = torch.stack(self.pdf, dim=0)  # [B, P]
+        dA = self.grid_spacing**2  # area element
+        self.phi_mass = (phi_flat * dA).sum(dim=1)  # [B]
 
         # reset counters
         if env_index is None:
@@ -332,7 +334,6 @@ class Scenario(BaseScenario):
             self.n_collisions.zero_()
         else:
             self.n_collisions[env_index].zero_()
-
 
         # random obstacles
         ScenarioUtils.spawn_entities_randomly(
@@ -346,7 +347,6 @@ class Scenario(BaseScenario):
         )
 
         self.spawn_walls(env_index)
-
 
         for agent in self.world.agents:
             agent.set_pos(
@@ -472,336 +472,94 @@ class Scenario(BaseScenario):
                     ).repeat(self.world.batch_dim, 1)
                     sample = self.sample(pos, norm=False)
                     self.max_pdf = torch.maximum(self.max_pdf, sample)
-    
-    def compute_voronoi_region(self, robot_positions, robot_idx):
-        """
-        Compute which grid points belong to robot i's Voronoi region.
-        
-        Args:
-            robot_positions: array of shape (n_robots, 2)
-            robot_idx: index of the robot
-        
-        Returns:
-            Boolean mask indicating points in Voronoi region
-        """
-        # Compute distances from all grid points to all robots
-        dists = torch.linalg.norm(
-            self.xy_grid[:, np.newaxis, :] - robot_positions[np.newaxis, :, :],
-            axis=2
-        )
-        
-        # Points belong to robot i if it's the closest
-        closest_robot = torch.argmin(dists, axis=1)
-        voronoi_mask = (closest_robot == robot_idx)
 
-        # limit to range
-        robot = robot_positions[robot_idx]
-        dists_to_robot = torch.linalg.norm(self.xy_grid - robot, axis=1)
-        voronoi_mask = torch.logical_and(voronoi_mask, dists_to_robot <= self.cells_range * self.grid_spacing)
-        
-        return voronoi_mask
+    def compute_voronoi_partitioning(self, robot_positions):
+        """
+        Compute Voronoi partitioning of the space given robot positions.
+
+        Args:
+            robot_positions: tensor of shape (n_robots, 2)
+
+        Returns:
+            List of masks, one per robot, indicating which grid points belong to each robot's Voronoi region
+        """
+        n_robots = robot_positions.shape[0]
+
+        # Compute distances from all grid points to all robots at once
+        # xy_grid: [P, 2], robot_positions: [N, 2] -> dists: [N, P]
+        dists = torch.linalg.norm(
+            self.xy_grid.unsqueeze(0) - robot_positions.unsqueeze(1), dim=2
+        )
+
+        # Find closest robot for each grid point
+        closest_robot = torch.argmin(dists, dim=0)  # [P]
+
+        # Create masks for all robots at once using broadcasting
+        robot_indices = torch.arange(n_robots, device=robot_positions.device)
+        masks = closest_robot.unsqueeze(0) == robot_indices.unsqueeze(1)  # [N, P]
+
+        # Apply range limit for all robots at once
+        # threshold = self.cells_range * self.grid_spacing
+        # range_mask = dists <= threshold
+
+        # # Combine both masks
+        # masks = masks & range_mask  # [N, P]
+
+        # Convert to list of masks
+        return [masks[i] for i in range(n_robots)]
+
 
     def reward(self, agent: Agent) -> Tensor:
         if self.world.agents.index(agent) == 0:
             self.steps += 1
-
-        """if eval:
-            return torch.zeros(self.world.batch_dim)
-        else:"""
-        observation = self.observation(
-            agent
-        )  # pos, vel, lidar, pdf(centralized or decentralized)
-        # extract info from observation
-        pdf = observation[:, (4 + self.n_rays) :]
-        pos = observation[:, :2]
-        # vel = observation[:, 2:4]
-        lidar_values = observation[:, 4 : 4 + self.n_rays]  # [n_envs, n_rays]
-
-        # get detected robots relative positions
-        angles = torch.linspace(
-            self.angle_start,
-            self.angle_end,
-            lidar_values.shape[1],
-            device=self.world.device,
+        robots = torch.zeros(
+            (self.world.batch_dim, len(self.world.agents), 2), device=self.world.device
         )
-        x = lidar_values * torch.cos(angles)
-        y = lidar_values * torch.sin(angles)
-        robots_rel = torch.stack((x, y), dim=-1)  # [n_envs, n_rays, 2]
-        # detected_mask = lidar_values != self.lidar_range  # [n_envs, n_rays]
-        points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
-        robots = points + robots_rel
-        # points = torch.cat(
-        #     (pos.unsqueeze(1), robots), dim=1
-        # )  # [n_envs, n_robot_tot, 2]
+        for i, ag in enumerate(self.world.agents):
+            robots[:, i, :] = ag.state.pos  # [B, 2]
+
         rewards = torch.zeros(self.world.batch_dim, device=self.world.device)
         for env_idx in range(self.world.batch_dim):
-            mask = torch.ones(points.shape[1], dtype=torch.bool)
-            indices_robots_too_far = torch.where(lidar_values[env_idx] == self.lidar_range)
-            mask[indices_robots_too_far] = False
-            # detected_robots = points[:, :indices_robots_too_far, :]
-            # detected_robots = torch.index_select(robots[env_idx], 1, torch.where(mask))
-            detected_robots = robots[env_idx][mask]
-            all_robots = torch.cat((pos[env_idx].unsqueeze(0), detected_robots), dim=0) if len(detected_robots) > 0 else pos[env_idx].unsqueeze(0)
-            all_robots = all_robots.view(-1, 2)
+            voronoi_masks = self.compute_voronoi_partitioning(robots[env_idx])
 
-            voronoi_mask = self.compute_voronoi_region(all_robots, 0)
-            voronoi_points = self.xy_grid[voronoi_mask]
-            phi_values = self.pdf[env_idx][voronoi_mask]
-            # phi_values = phi_raw / (torch.sum(phi_raw) + 1e-6)
-            d2 = torch.sum((voronoi_points - pos[env_idx])**2, dim=1)
-            cell_area = 2*self.xdim * 2*self.ydim * self.grid_spacing**2
-            mass = torch.sum(phi_values) * cell_area #/ self.grid_spacing**2 
-            # centroid = torch.sum(voronoi_points * phi_values.unsqueeze(-1), dim=0) / (mass + 1e-6)
-
-            # Collision penalty
-            if not hasattr(agent, "agent_collision_rew"):
-                agent.agent_collision_rew = torch.zeros(
-                    self.world.batch_dim, device=self.world.device
-                )
-            agent.agent_collision_rew[:] = 0
             for i, a in enumerate(self.world.agents):
-                if i != self.world.agents.index(agent):
-                    if self.world.collides(a, agent):
-                        distance = self.world.get_distance(a, agent)
-                        agent.agent_collision_rew[
-                            distance <= self.min_collision_distance
-                        ] += self.agent_collision_penalty
-            collision_penalty = agent.agent_collision_rew
+                voronoi_points = self.xy_grid[voronoi_masks[i]]
+                phi_values = self.pdf[env_idx][voronoi_masks[i]]
+                # phi_values = phi_raw / (torch.sum(phi_raw) + 1e-6)
+                d2 = torch.sum((voronoi_points - robots[env_idx, i]) ** 2, dim=1)
+                cell_area = 2 * self.xdim * 2 * self.ydim * self.grid_spacing**2
+                mass = torch.sum(phi_values) * cell_area  # / self.grid_spacing**2
+                # centroid = torch.sum(voronoi_points * phi_values.unsqueeze(-1), dim=0) / (mass + 1e-6)
 
-            # rewards[env_idx] = -0.5 * torch.sum(phi_values * d2) * self.grid_spacing**2 / (mass + 1e-6)
-            rewards[env_idx] = -0.5 * torch.sum(phi_values * d2) * cell_area / (mass + 1e-6) - collision_penalty[env_idx]
-            # rewards[env_idx] = -0.5 * torch.sum((pos[env_idx] - centroid)**2) - collision_penalty[env_idx]
-            # rewards[env_idx] = -0.5 * torch.sum(phi_values * d2) * self.grid_spacing**2 - collision_penalty[env_idx]
-        SCALE_FACTOR = 1e2
-        rewards *= SCALE_FACTOR
+                # Collision penalty
+                if not hasattr(agent, "agent_collision_rew"):
+                    agent.agent_collision_rew = torch.zeros(
+                        self.world.batch_dim, device=self.world.device
+                    )
+                agent.agent_collision_rew[:] = 0
+                for j, other_agent in enumerate(self.world.agents):
+                    if j != i:
+                        if self.world.collides(other_agent, agent):
+                            distance = self.world.get_distance(other_agent, agent)
+                            agent.agent_collision_rew[
+                                distance <= self.min_collision_distance
+                            ] += self.agent_collision_penalty
+                collision_penalty = agent.agent_collision_rew
+
+                # Inter-agent repulsion (inverse distance squared)
+                # repulsion_penalty = 0
+                # agent_pos = robots[env_idx, i]
+                # for j, other_agent in enumerate(self.world.agents):
+                #     if j != i:
+                #         other_pos = robots[env_idx, j]
+                #         dist = torch.linalg.norm(agent_pos - other_pos)
+                #         repulsion_penalty += self.repulsion_weight / (dist**2 + 1e-6)
+
+                rewards[env_idx] += (
+                    -0.5 * torch.sum(phi_values * d2) #* cell_area / (mass + 1e-6)
+                    - collision_penalty[env_idx]
+                )
         return rewards
-
-            
-
-    # def reward(self, agent: Agent) -> Tensor:
-    #     if self.world.agents.index(agent) == 0:
-    #         self.steps += 1
-
-    #     """if eval:
-    #         return torch.zeros(self.world.batch_dim)
-    #     else:"""
-    #     observation = self.observation(
-    #         agent
-    #     )  # pos, vel, lidar, pdf(centralized or decentralized)
-    #     extract info from observation
-    #     pdf = observation[:, (4 + self.n_rays) :]
-    #     pos = observation[:, :2]
-    #     vel = observation[:, 2:4]
-    #     lidar_values = observation[:, 4 : 4 + self.n_rays]  # [n_envs, n_rays]
-
-    #     get detected robots relative positions
-    #     angles = torch.linspace(
-    #         self.angle_start,
-    #         self.angle_end,
-    #         lidar_values.shape[1],
-    #         device=self.world.device,
-    #     )
-    #     x = lidar_values * torch.cos(angles)
-    #     y = lidar_values * torch.sin(angles)
-    #     robots_rel = torch.stack((x, y), dim=-1)  # [n_envs, n_rays, 2]
-    #     detected_mask = lidar_values != self.lidar_range  # [n_envs, n_rays]
-    #     points = pos.unsqueeze(1).expand(-1, self.n_rays, -1)  # [n_envs, n_rays, 2]
-    #     robots = points + robots_rel
-    #     points = torch.cat(
-    #         (pos.unsqueeze(1), robots), dim=1
-    #     )  # [n_envs, n_robot_tot, 2]
-
-    #     indices_robots_too_far = torch.where(lidar_values == self.lidar_range)
-
-    #     rewards = torch.zeros(self.world.batch_dim, device=self.world.device)
-    #     for env_idx in range(self.world.batch_dim):
-    #         robots_j = points[env_idx, :, :]
-    #         vor = self.voronoi.partitioning_single_env(robots_j)
-    #         rewards[env_idx] = (
-    #             self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
-    #                 vor, pdf[env_idx], 0, env_idx
-    #             )
-    #         )
-
-    #     if self.shared_rew:
-    #         is_first = self.world.agents.index(agent) == 0
-    #         rewards = torch.zeros(
-    #             (self.world.batch_dim, self.n_agents), device=self.world.device
-    #         )
-    #         if is_first:
-    #             for env_idx in range(self.world.batch_dim):
-    #                 robots_j = points[env_idx, :, :]
-    #                 voro = self.voronoi.partitioning_single_env(robots_j)
-    #                 for ag_idx in range(self.n_agents):
-    #                     rewards[env_idx, ag_idx] = (
-    #                         self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
-    #                             voro, pdf[env_idx], 0, env_idx
-    #                         )
-    #                     )
-
-    #             self.sampling_rew = rewards.sum(-1)
-    #     else:
-    #         rewards = torch.zeros(self.world.batch_dim, device=self.world.device)
-    #         for env_idx in range(self.world.batch_dim):
-    #             robots_j = points[env_idx, :, :]
-    #             vor = self.voronoi.partitioning_single_env(robots_j)
-    #             rewards[env_idx] = (
-    #                 self.voronoi.computeHalfRangeCoverageFunctionSingleEnv(
-    #                     vor, pdf[env_idx], 0, env_idx
-    #                 )
-    #             )
-    #         print(
-    #         f"Agent: {self.world.agents.index(agent)} - \n reward: {rewards} - \n robots_j: {points[0, :, :]} - \n pdf[0]: {pdf[0]}"
-    #         )
-    #         print(f"Agent: {self.world.agents.index(agent)} - \n reward: {rewards}")
-
-    #     for a in self.world.agents:
-    #         if not hasattr(a, "agent_collision_rew"):
-    #             a.agent_collision_rew = torch.zeros(
-    #                 self.world.batch_dim, device=self.world.device
-    #             )
-    #         a.agent_collision_rew[:] = 0
-
-    #     for i, a in enumerate(self.world.agents):
-    #         for j, b in enumerate(self.world.agents):
-    #             if i <= j:
-    #                 continue
-    #             if self.world.collides(a, b):
-    #                 distance = self.world.get_distance(a, b)
-    #                 a.agent_collision_rew[
-    #                     distance <= self.min_collision_distance
-    #                 ] += self.agent_collision_penalty
-    #                 b.agent_collision_rew[
-    #                     distance <= self.min_collision_distance
-    #                 ] += self.agent_collision_penalty
-
-    #     pos_rew = self.sampling_rew if self.shared_rew else rewards
-    #     return pos_rew + agent.agent_collision_rew
-
-
-    # def reward(self, agent: Agent) -> torch.Tensor:
-    #     """
-    #     Basic coverage reward = negative normalized Voronoi cost (min at 0).
-    #     Agents maximize this, so they drive the cost down toward 0.
-
-    #     Per-agent (shared_rew=False):
-    #         reward = - reward_scale * ( J_hat_i + lambda_col * collisions_i )
-
-    #     Team (shared_rew=True):
-    #         reward = - reward_scale * ( J_hat_team + lambda_col * collisions_team )
-
-    #     Where J_hat ∈ [0,1] is the φ-weighted quadratic Voronoi cost normalized by
-    #     M = (phi_mass * R^2). Collisions add non-negative cost; best case is 0.
-    #     """
-    #     # -- optional field dynamics once per step --
-    #     if self.world.agents.index(agent) == 0:
-    #         self.steps += 1
-    #         # if self.dynamic and (self.steps % int(self.dynamic_every) == 0):
-
-    #         #     def rng(n):
-    #         #         return torch.zeros(
-    #         #             (self.world.batch_dim, 1), device=self.world.device
-    #         #         ).uniform_(-n, n)
-
-    #         #     for i in range(self.n_gaussians):
-    #         #         self.locs[i] = torch.cat([rng(self.xdim), rng(self.ydim)], dim=-1)
-    #         #     self.gaussians = [
-    #         #         MultivariateNormal(loc=loc, covariance_matrix=cov)
-    #         #         for loc, cov in zip(self.locs, self.cov_mats)
-    #         #     ]
-    #         #     self._recompute_pdf_and_norms(env_index=None)
-
-    #     # B = self.world.batch_dim
-    #     idx = self.world.agents.index(agent)
-    #     N = self.n_agents
-    #     dA = self.grid_spacing**2
-
-    #     # Positions and φ over grid
-    #     pos_agents = torch.stack(
-    #         [ag.state.pos for ag in self.world.agents], dim=1
-    #     )  # [B,N,2]
-    #     phi_flat = torch.stack(self.pdf, dim=0)  # [B,P]
-    #     phi_flat = torch.nan_to_num(phi_flat, 0.0, 0.0, 0.0)
-
-    #     # ----- hard Voronoi assignment -----
-    #     P = self.xy_grid.shape[0]
-    #     diff = self.xy_grid.view(1, 1, P, 2) - pos_agents.unsqueeze(2)  # [B,N,P,2]
-    #     d2 = (diff**2).sum(-1)  # [B,N,P]
-    #     assign = d2.argmin(dim=1)  # [B,P]
-    #     mask = (
-    #         torch.nn.functional.one_hot(assign, num_classes=N)
-    #         .permute(0, 2, 1)
-    #         .to(phi_flat.dtype)
-    #     )  # [B,N,P]
-
-    #     radius_mask = (d2 <= (0.5*self.lidar_range)**2).to(phi_flat.dtype)  # [B,N,P]
-    #     # radius_mask = (d2 <= (self.cells_range*self.grid_spacing)**2).to(phi_flat.dtype)  # [B,N,P]
-    #     mask = mask * radius_mask
-
-    #     # φ-weighted quadratic costs
-    #     J_agents = (mask * phi_flat.unsqueeze(1) * d2).sum(dim=2) * dA  # [B,N]
-    #     J_team = J_agents.sum(dim=1)  # [B]
-    #     # A = mask[0, 0, :].reshape(int(np.sqrt(P)), int(np.sqrt(P)))
-    #     # A = A.to(torch.int)
-    #     # for row in A:
-    #     #     print(''.join(f'{x.item():4d}' for x in row))
-
-    #     # Normalization M = phi_mass * R^2  → J_hat ∈ [0,1]
-    #     # phi_mass = self.phi_mass.squeeze(-1).clamp_min(1e-8)  # [B]
-    #     # R2 = (self.xdim**2 + self.ydim**2) if (self.xdim > 0 and self.ydim > 0) else 1.0
-    #     # M = (phi_mass * R2).clamp_min(1e-8)  # [B]
-    #     # J_hat_agents = J_agents / M.unsqueeze(-1)  # [B,N]
-    #     # J_hat_team = J_team / M  # [B]
-
-    #     # LOCAL PHI NORMALIZATION
-    #     phi_mass_local = (mask * phi_flat.unsqueeze(1)).sum(dim=2) * dA  # [B,N]
-    #     J_hat_agents = J_agents / phi_mass_local.clamp_min(1e-8)        # [B,N]
-    #     J_hat_team = J_team /phi_mass_local.clamp_min(1e-8).sum(dim=-1)  #[B]
-
-    #     M = 1000
-    #     # NO NORMALIZATION
-    #     # J_hat_agents = M * J_agents  # [B,N]
-    #     # J_hat_team = M * J_team  # [B]
-    #     # print(f"J_hat_agent {idx}: {J_hat_agents[:, idx]}")
-    #     # print(f"J_hat_team: {J_hat_team}")
-
-    #     # ----- collisions (non-negative cost) -----
-    #     pdiff = pos_agents[:, :, None, :] - pos_agents[:, None, :, :]
-    #     pd2_mat = (pdiff**2).sum(-1)
-    #     eye = torch.eye(N, device=self.world.device, dtype=torch.bool).unsqueeze(0)
-    #     coll_mask = (pd2_mat <= (self.min_collision_distance**2)) & ~eye
-    #     colls_per_agent = coll_mask.sum(-1)  # [B,N]
-    #     # check collisions with obstacles
-    #     # for agent in self.world.agents:
-    #     #     idx_a = self.world.agents.index(agent)
-    #     #     for wall in self.walls:
-    #     #         dist = self.world.get_distance(agent, wall)  # [B]
-    #     #         colls_per_agent[:, idx_a] += (dist <= self.min_collision_distance).to(
-    #     #             torch.long
-    #     #         )
-
-    #     if idx == 0:
-    #         self.n_collisions += colls_per_agent.to(torch.long)
-
-    #     # # Use the magnitude of your collision penalty as a positive cost weight
-    #     lambda_col = float(abs(getattr(self, "agent_collision_penalty", 20)))
-    #     # ----- final reward = - (costs) -----
-    #     if self.shared_rew:
-    #         cost = J_hat_team + lambda_col * colls_per_agent.sum(-1).float()  # [B]  ≥ 0
-    #         rew = -cost  # [B] ≤ 0
-    #     else:
-    #         cost = (
-    #             J_hat_agents[:, idx] + lambda_col * colls_per_agent[:, idx].float()
-    #         )  # [B] ≥ 0
-    #         rew = -cost  # [B] ≤ 0
-
-    #     # Scale reward magnitude
-    #     # norm_rew = self.normalizer.normalize(rew)
-    #     # Optional clamp to keep rewards within [-reward_scale*(1+λ(N-1)), 0]
-    #     # rew = rew.clamp(min=-float(self.reward_scale)*(1.0 + lambda_col*(N-1)), max=0.0)
-
-    #     # Tip: also log the positive cost so you can see it decay to 0 in your plots.
-    #     return rew
 
     def observation(self, agent: Agent) -> Tensor:
         if self.dynamic and self.steps % 100 == 0.0:
@@ -1048,6 +806,35 @@ class Scenario(BaseScenario):
                 color = color[env_index]
             geom.set_color(*color)
             geoms.append(geom)
+
+        # Voronoi points
+        # robots = torch.zeros(
+        #     (self.world.batch_dim, len(self.world.agents), 2), device=self.world.device
+        # )
+        # for i, ag in enumerate(self.world.agents):
+        #     robots[:, i, :] = ag.state.pos  # [B, 2]
+
+        # voronoi_masks = self.compute_voronoi_partitioning(robots[0])
+        # # generate colors for each agent
+        # colors = [
+        #     Color.BLUE.value,
+        #     Color.RED.value,
+        #     Color.GREEN.value,
+        #     Color.ORANGE.value,
+        #     # Color.PURPLE.value,
+        #     # Color.CYAN.value,
+        #     # Color.MAGENTA.value,
+        #     # Color.YELLOW.value,
+        # ]
+        # for i, agent in enumerate(self.world.agents):
+        #     voronoi_points = self.xy_grid[voronoi_masks[i]]
+        #     for point in voronoi_points:
+        #         geom = rendering.make_circle(radius=0.05, filled=True)
+        #         geom.set_color(*colors[i % len(colors)])
+        #         xform = rendering.Transform()
+        #         geom.add_attr(xform)
+        #         xform.set_translation(point[0], point[1])
+        #         geoms.append(geom)
 
         return geoms
 
